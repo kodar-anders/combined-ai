@@ -1,0 +1,8 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Yarn-managed / generated files: collapse diffs and exclude from language stats
+/.yarn/releases/** binary linguist-vendored
+/.yarn/plugins/** binary linguist-vendored
+/.yarn/sdks/** linguist-generated
+yarn.lock linguist-generated
