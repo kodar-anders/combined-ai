@@ -3,6 +3,7 @@
     // --- Language / output target ---
     "target": "ES2022",
     "lib": ["ES2022"],
+    "types": ["node"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "moduleDetection": "force",
