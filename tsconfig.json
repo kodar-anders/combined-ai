@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    // --- Language / output target ---
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+
+    // --- Module semantics (tsup/esbuild handles the actual emit) ---
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    // --- Type-checking strictness ---
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    // tsup's .d.ts bundler injects a deprecated `baseUrl`; silence the TS6→7 deprecation error.
+    "ignoreDeprecations": "6.0",
+
+    // tsc is only used for type-checking (`tsc --noEmit`); tsup produces the build.
+    "noEmit": true
+  },
+  "include": ["src"]
+}
