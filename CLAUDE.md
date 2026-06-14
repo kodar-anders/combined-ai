@@ -11,7 +11,9 @@
   prettier on the change file(s). Don't skip either, and don't wait until "done" — run them as part of the edit loop. If any of the edited files are covered by Jest tests, also run those specific tests (`yarn jest path/to/file.spec.tsx`) before declaring the task done. Use `yarn eslint <path>` rather than the full-project `yarn lint`.
 - Always update `CLAUDE.md` whenever you make any change that might affect the agent's behavior, or when you make a 
   change that you think should be documented. Basically, try to always keep `CLAUDE.md` up-to-date with the project.
-- Always ask if you should update `CLAUDE.md` when you get instructions that is not yet in `CLAUDE.md` or contradicts an existing instruction.
+- Always ask if you should update `CLAUDE.md` when you get instructions that you think could be good to add to it.
+- Keep `README.md` and `CHANGELOG.md` up to date. For the readme file: record notable changes under the `## 
+[Unreleased]` section (Keep a Changelog format). `README.md` and `CHANGELOG.md` exist at the project root.
 
 ## What this is
 
