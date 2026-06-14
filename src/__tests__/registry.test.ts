@@ -13,11 +13,13 @@ describe("ProviderRegistry", () => {
     const registry = new ProviderRegistry({
       anthropic: { apiKey: "a" },
       openai: { apiKey: "o" },
+      gemini: { apiKey: "g" },
     });
 
     expect(registry.select("anthropic").name).toBe("anthropic");
     expect(registry.select("openai").name).toBe("openai");
-    expect(registry.names()).toEqual(["anthropic", "openai"]);
+    expect(registry.select("gemini").name).toBe("gemini");
+    expect(registry.names()).toEqual(["anthropic", "openai", "gemini"]);
   });
 
   it("only registers providers present in the config", () => {
@@ -30,11 +32,12 @@ describe("ProviderRegistry", () => {
 
   it("returns names in a fixed order regardless of config key order", () => {
     const registry = new ProviderRegistry({
+      gemini: { apiKey: "g" },
       openai: { apiKey: "o" },
       anthropic: { apiKey: "a" },
     });
 
-    expect(registry.names()).toEqual(["anthropic", "openai"]);
+    expect(registry.names()).toEqual(["anthropic", "openai", "gemini"]);
   });
 
   it("throws when selecting a provider that wasn't configured, listing the configured ones", () => {

@@ -4,18 +4,18 @@ A small TypeScript library that combines several AI providers behind one
 interface. It lets you talk to a provider through a single, consistent contract
 today, and is being built toward **combining multiple providers on one prompt**.
 
-> **Status: early.** The core abstraction and two providers (Anthropic / Claude
-> and OpenAI) are in place, with completion and streaming, plus a registry to
-> select a provider by name. Multi-provider combination is planned — see
-> [Roadmap](#roadmap).
+> **Status: early.** The core abstraction and three providers (Anthropic /
+> Claude, OpenAI, and Google Gemini) are in place, with completion and streaming,
+> plus a registry to select a provider by name. Multi-provider combination is
+> planned — see [Roadmap](#roadmap).
 
 ## Features
 
 - One provider-agnostic contract (`Provider`) for every backend.
 - `complete()` — run a prompt, get the full text back.
 - `stream()` — run a prompt, receive text deltas as they arrive.
-- **Anthropic (Claude)** and **OpenAI** providers, talking to their HTTP APIs
-  directly over the global `fetch` — no SDK dependency.
+- **Anthropic (Claude)**, **OpenAI**, and **Google Gemini** providers, talking
+  to their HTTP APIs directly over the global `fetch` — no SDK dependency.
 - `ProviderRegistry` — a single point of access: configure your providers, then
   select one by name.
 - Dual ESM + CJS package with TypeScript types.
@@ -50,6 +50,7 @@ import { ProviderRegistry } from "combined-ai";
 const registry = new ProviderRegistry({
   anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! },
   openai: { apiKey: process.env.OPENAI_API_KEY! },
+  gemini: { apiKey: process.env.GEMINI_API_KEY! },
 });
 
 const provider = registry.select("anthropic"); // throws if not configured
@@ -89,6 +90,11 @@ new ProviderRegistry({
     model: "gpt-4.1", // optional; this is the default
     baseUrl: "https://api.openai.com", // optional; this is the default
   },
+  gemini: {
+    apiKey: "...", // required
+    model: "gemini-2.5-pro", // optional; this is the default
+    baseUrl: "https://generativelanguage.googleapis.com", // optional; this is the default
+  },
 });
 ```
 
@@ -103,9 +109,9 @@ registry.select("openai");
 // throws: No provider "openai" configured. Configured: anthropic
 ```
 
-`select()` only accepts a known provider name (`"anthropic"` | `"openai"`), so
-typos are caught at compile time; selecting a name you didn't configure throws
-at runtime.
+`select()` only accepts a known provider name
+(`"anthropic"` | `"openai"` | `"gemini"`), so typos are caught at compile time;
+selecting a name you didn't configure throws at runtime.
 
 ### Request options
 
@@ -118,18 +124,27 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 | `model`     | `string`    | Optional per-request model override.                           |
 | `maxTokens` | `number`    | Optional output cap (defaults: 16000 complete / 64000 stream). |
 
+> **Gemini note:** Gemini 2.5 models are _thinking_ models, and their internal
+> thinking tokens count against `maxTokens` (Gemini's `maxOutputTokens`). A very
+> small cap can therefore be consumed entirely by thinking, leaving the visible
+> answer empty or truncated — where Anthropic/OpenAI would still return a short
+> reply. Give Gemini ample headroom (e.g. a few hundred tokens or more). Note
+> that `gemini-2.5-pro` cannot fully disable thinking, so this behavior can't
+> simply be turned off.
+
 ## Public API
 
 Exported from the package entry point:
 
 - `ProviderRegistry` — the single entry point.
 - Config types: `ProviderRegistryConfig`, `ProviderName`,
-  `AnthropicProviderOptions`, `OpenAIProviderOptions`.
+  `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
   `CompletionResult`.
 
-The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`) are
-**not** exported — they are constructed internally by the registry.
+The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
+`GeminiProvider`) are **not** exported — they are constructed internally by the
+registry.
 
 ## Development
 
@@ -149,12 +164,12 @@ yarn format             # Prettier --write
 `yarn test:integration` runs tests against the real provider APIs. They are
 double-gated and skipped by default — each provider's suite runs only when both
 `RUN_LIVE_TESTS=1` (set by the script) and that provider's key are present
-(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`). To enable them, copy the template and
-add your key(s):
+(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`). To enable them, copy
+the template and add your key(s):
 
 ```bash
 cp .env.example .env
-# edit .env and set ANTHROPIC_API_KEY=sk-ant-... and/or OPENAI_API_KEY=sk-...
+# edit .env and set ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY
 yarn test:integration
 ```
 
@@ -164,16 +179,19 @@ default, which is all integration tests):
 ```bash
 yarn test:integration openai.integration      # OpenAI only
 yarn test:integration anthropic.integration    # Anthropic only
+yarn test:integration gemini.integration       # Gemini only
 ```
 
 `.env` is gitignored and loaded automatically for the test run. Live tests use a
-cheap model and a tiny token cap, so cost is negligible.
+cheap model and a small token cap, so cost is negligible (Gemini uses a slightly
+larger cap to leave room for its thinking tokens — see the Gemini note above).
 
 ## Roadmap
 
 - [x] Core `Provider` abstraction + Anthropic provider (completion + streaming).
 - [x] A second provider (OpenAI) behind the same interface.
 - [x] Provider registry / selection by name.
+- [x] A third provider (Google Gemini) behind the same interface.
 - [ ] Combine multiple providers on one prompt.
 
 ## License

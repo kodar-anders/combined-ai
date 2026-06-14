@@ -11,6 +11,7 @@ import {
   AnthropicProvider,
   type AnthropicProviderOptions,
 } from "./providers/anthropic";
+import { GeminiProvider, type GeminiProviderOptions } from "./providers/gemini";
 import { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
 import { type Provider } from "./types";
 
@@ -18,6 +19,7 @@ import { type Provider } from "./types";
 export type ProviderRegistryConfig = {
   anthropic?: AnthropicProviderOptions;
   openai?: OpenAIProviderOptions;
+  gemini?: GeminiProviderOptions;
 };
 
 /** The names the registry knows how to construct. */
@@ -36,6 +38,9 @@ export class ProviderRegistry {
     }
     if (config.openai) {
       this.#providers.set("openai", new OpenAIProvider(config.openai));
+    }
+    if (config.gemini) {
+      this.#providers.set("gemini", new GeminiProvider(config.gemini));
     }
   }
 
