@@ -4,18 +4,17 @@ A small TypeScript library that combines several AI providers behind one
 interface. It lets you talk to a provider through a single, consistent contract
 today, and is being built toward **combining multiple providers on one prompt**.
 
-> **Status: early.** The core abstraction and the first provider (Anthropic /
-> Claude) are in place, with completion and streaming. More providers, provider
-> selection, and multi-provider combination are planned — see
-> [Roadmap](#roadmap).
+> **Status: early.** The core abstraction and two providers (Anthropic / Claude
+> and OpenAI) are in place, with completion and streaming. Provider selection and
+> multi-provider combination are planned — see [Roadmap](#roadmap).
 
 ## Features
 
 - One provider-agnostic contract (`Provider`) for every backend.
 - `complete()` — run a prompt, get the full text back.
 - `stream()` — run a prompt, receive text deltas as they arrive.
-- **Anthropic (Claude)** provider, talking to the Messages API directly over
-  the global `fetch` — no SDK dependency.
+- **Anthropic (Claude)** and **OpenAI** providers, talking to their HTTP APIs
+  directly over the global `fetch` — no SDK dependency.
 - Dual ESM + CJS package with TypeScript types.
 
 ## Requirements
@@ -36,6 +35,10 @@ npm install git+ssh://git@github.com:kodar-anders/combined-ai.git
 
 The library never reads environment variables — you always pass the API key in
 explicitly.
+
+Both providers implement the same `Provider` contract, so they are
+interchangeable — swap `AnthropicProvider` for `OpenAIProvider` (and pass the
+matching key) without changing the calling code.
 
 ```ts
 import { AnthropicProvider } from "combined-ai";
@@ -67,6 +70,12 @@ new AnthropicProvider({
   model: "claude-opus-4-8", // optional; this is the default
   baseUrl: "https://api.anthropic.com", // optional; this is the default
 });
+
+new OpenAIProvider({
+  apiKey: "sk-...", // required
+  model: "gpt-4.1", // optional; this is the default
+  baseUrl: "https://api.openai.com", // optional; this is the default
+});
 ```
 
 ### Request options
@@ -85,6 +94,7 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 Exported from the package entry point:
 
 - `AnthropicProvider`, `AnthropicProviderOptions`
+- `OpenAIProvider`, `OpenAIProviderOptions`
 - Types: `Provider`, `Message`, `Role`, `CompletionRequest`, `CompletionResult`
 
 ## Development
@@ -102,15 +112,24 @@ yarn format             # Prettier --write
 
 ### Live integration tests
 
-`yarn test:integration` runs tests against the real Anthropic API. They are
-double-gated and skipped by default — they run only when both `RUN_LIVE_TESTS=1`
-(set by the script) and `ANTHROPIC_API_KEY` are present. To enable them, copy
-the template and add your key:
+`yarn test:integration` runs tests against the real provider APIs. They are
+double-gated and skipped by default — each provider's suite runs only when both
+`RUN_LIVE_TESTS=1` (set by the script) and that provider's key are present
+(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`). To enable them, copy the template and
+add your key(s):
 
 ```bash
 cp .env.example .env
-# edit .env and set ANTHROPIC_API_KEY=sk-ant-...
+# edit .env and set ANTHROPIC_API_KEY=sk-ant-... and/or OPENAI_API_KEY=sk-...
 yarn test:integration
+```
+
+To run just one provider's suite, append its filename pattern (it replaces the
+default, which is all integration tests):
+
+```bash
+yarn test:integration openai.integration      # OpenAI only
+yarn test:integration anthropic.integration    # Anthropic only
 ```
 
 `.env` is gitignored and loaded automatically for the test run. Live tests use a
@@ -119,7 +138,7 @@ cheap model and a tiny token cap, so cost is negligible.
 ## Roadmap
 
 - [x] Core `Provider` abstraction + Anthropic provider (completion + streaming).
-- [ ] A second provider behind the same interface.
+- [x] A second provider (OpenAI) behind the same interface.
 - [ ] Provider registry / selection by name.
 - [ ] Combine multiple providers on one prompt.
 

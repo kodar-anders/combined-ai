@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
-import { AnthropicProvider } from "./anthropic";
+import { AnthropicProvider } from "../providers/anthropic";
 
 const originalFetch = globalThis.fetch;
 
