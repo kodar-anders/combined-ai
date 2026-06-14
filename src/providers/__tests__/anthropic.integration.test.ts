@@ -53,7 +53,7 @@ describeLive("AnthropicProvider (live)", () => {
 
       expect(deltas.length).toBeGreaterThan(0);
       expect(deltas.join("").length).toBeGreaterThan(0);
-      console.log("Stream result:", deltas.join(""));
+      console.log("Stream result:", deltas.join(" | "));
     },
     TIMEOUT_MS,
   );
