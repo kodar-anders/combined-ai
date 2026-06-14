@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
-import { OpenAIProvider } from "../providers/openai";
+import { OpenAIProvider } from "../openai";
 
 const originalFetch = globalThis.fetch;
 
