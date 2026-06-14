@@ -1,26 +1,26 @@
 /**
- * Live contract test against the real Anthropic API.
+ * Live contract test against the real OpenAI API.
  *
  * Double-gated so it never fires by accident: it runs only when BOTH
- * `RUN_LIVE_TESTS=1` and `ANTHROPIC_API_KEY` are set — otherwise the suite is
- * skipped. Run it with `yarn test:integration`. Uses the cheapest model and a
- * tiny token cap to keep cost negligible.
+ * `RUN_LIVE_TESTS=1` and `OPENAI_API_KEY` are set — otherwise the suite is
+ * skipped. Run it with `yarn test:integration`. Uses a cheap model and a tiny
+ * token cap to keep cost negligible.
  */
 
 import { describe, expect, it } from "@jest/globals";
 
-import { AnthropicProvider } from "../providers/anthropic";
+import { OpenAIProvider } from "../openai";
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
+const apiKey = process.env.OPENAI_API_KEY;
 const live = process.env.RUN_LIVE_TESTS === "1" && apiKey !== undefined;
 const describeLive = live ? describe : describe.skip;
 
 const TIMEOUT_MS = 30_000;
 
-describeLive("AnthropicProvider (live)", () => {
-  const provider = new AnthropicProvider({
+describeLive("OpenAIProvider (live)", () => {
+  const provider = new OpenAIProvider({
     apiKey: apiKey ?? "",
-    model: "claude-haiku-4-5",
+    model: "gpt-4.1-mini",
   });
 
   it(
@@ -34,7 +34,7 @@ describeLive("AnthropicProvider (live)", () => {
       });
 
       expect(result.text.length).toBeGreaterThan(0);
-      expect(result.model).toContain("haiku");
+      expect(result.model).toContain("gpt-4.1");
       console.log("Completion result:", result.text);
     },
     TIMEOUT_MS,
