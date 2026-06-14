@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:integration": "RUN_LIVE_TESTS=1 jest anthropic.integration",
+    "test:integration": "RUN_LIVE_TESTS=1 sh -c 'jest ${1:-integration}' --",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

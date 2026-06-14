@@ -1,0 +1,60 @@
+/**
+ * Live contract test against the real Anthropic API.
+ *
+ * Double-gated so it never fires by accident: it runs only when BOTH
+ * `RUN_LIVE_TESTS=1` and `ANTHROPIC_API_KEY` are set — otherwise the suite is
+ * skipped. Run it with `yarn test:integration`. Uses the cheapest model and a
+ * tiny token cap to keep cost negligible.
+ */
+
+import { describe, expect, it } from "@jest/globals";
+
+import { AnthropicProvider } from "../providers/anthropic";
+
+const apiKey = process.env.ANTHROPIC_API_KEY;
+const live = process.env.RUN_LIVE_TESTS === "1" && apiKey !== undefined;
+const describeLive = live ? describe : describe.skip;
+
+const TIMEOUT_MS = 30_000;
+
+describeLive("AnthropicProvider (live)", () => {
+  const provider = new AnthropicProvider({
+    apiKey: apiKey ?? "",
+    model: "claude-haiku-4-5",
+  });
+
+  it(
+    "completes a real request",
+    async () => {
+      const result = await provider.complete({
+        messages: [
+          { role: "user", content: "Reply with the single word: pong" },
+        ],
+        maxTokens: 16,
+      });
+
+      expect(result.text.length).toBeGreaterThan(0);
+      expect(result.model).toContain("haiku");
+      console.log("Completion result:", result.text);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "streams a real request",
+    async () => {
+      const deltas: string[] = [];
+      for await (const delta of provider.stream({
+        messages: [{ role: "user", content: "Count to three." }],
+        maxTokens: 16,
+      })) {
+        deltas.push(delta);
+      }
+
+      expect(deltas.length).toBeGreaterThan(0);
+      expect(deltas.join("").length).toBeGreaterThan(0);
+      console.log("Stream result:", deltas.join(""));
+    },
+    TIMEOUT_MS,
+  );
+});

@@ -15,3 +15,5 @@ export {
   AnthropicProvider,
   type AnthropicProviderOptions,
 } from "./providers/anthropic";
+
+export { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";

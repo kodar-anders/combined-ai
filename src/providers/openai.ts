@@ -1,0 +1,203 @@
+/**
+ * OpenAI provider, talking to the Chat Completions API directly over `fetch` —
+ * no SDK dependency.
+ */
+
+import {
+  type CompletionRequest,
+  type CompletionResult,
+  type Message,
+  type Provider,
+} from "../types";
+
+export type OpenAIProviderOptions = {
+  apiKey: string;
+  /** Defaults to {@link DEFAULT_MODEL}. */
+  model?: string;
+  /** Defaults to `https://api.openai.com`. */
+  baseUrl?: string;
+};
+
+const DEFAULT_MODEL = "gpt-4.1";
+const DEFAULT_BASE_URL = "https://api.openai.com";
+
+/** Non-streaming default keeps responses under the HTTP timeout window. */
+const DEFAULT_MAX_TOKENS = 16000;
+/** Streaming has no timeout concern, so give the model more room. */
+const DEFAULT_STREAM_MAX_TOKENS = 64000;
+
+export class OpenAIProvider implements Provider {
+  readonly name = "openai";
+
+  readonly #apiKey: string;
+  readonly #model: string;
+  readonly #baseUrl: string;
+
+  constructor(options: OpenAIProviderOptions) {
+    this.#apiKey = options.apiKey;
+    this.#model = options.model ?? DEFAULT_MODEL;
+    this.#baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+  }
+
+  async complete(request: CompletionRequest): Promise<CompletionResult> {
+    const model = request.model ?? this.#model;
+    const response = await fetch(`${this.#baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: this.#headers(),
+      body: JSON.stringify(
+        this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
+      ),
+    });
+
+    if (!response.ok) {
+      throw await requestError(response);
+    }
+
+    const data: unknown = await response.json();
+    return {
+      text: extractText(data),
+      model: extractModel(data, model),
+    };
+  }
+
+  async *stream(
+    request: CompletionRequest,
+  ): AsyncGenerator<string, void, void> {
+    const model = request.model ?? this.#model;
+    const response = await fetch(`${this.#baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: this.#headers(),
+      body: JSON.stringify(
+        this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
+      ),
+    });
+
+    if (!response.ok) {
+      throw await requestError(response);
+    }
+    if (!response.body) {
+      throw new Error("OpenAI streaming response had no body");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    let result = await reader.read();
+    while (!result.done) {
+      buffer += decoder.decode(result.value as Uint8Array, { stream: true });
+
+      for (
+        let nl = buffer.indexOf("\n");
+        nl !== -1;
+        nl = buffer.indexOf("\n")
+      ) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+
+        if (!line.startsWith("data:")) {
+          continue;
+        }
+        const payload = line.slice("data:".length).trim();
+        if (payload === "[DONE]") {
+          return;
+        }
+        const parsed: unknown = JSON.parse(payload);
+        if (!isRecord(parsed)) {
+          continue;
+        }
+
+        if (isRecord(parsed.error)) {
+          throw new Error(`OpenAI stream error: ${payload}`);
+        }
+
+        const delta = firstChoiceDelta(parsed);
+        if (isRecord(delta) && typeof delta.content === "string") {
+          yield delta.content;
+        }
+      }
+
+      result = await reader.read();
+    }
+  }
+
+  #headers(): Record<string, string> {
+    return {
+      authorization: `Bearer ${this.#apiKey}`,
+      "content-type": "application/json",
+    };
+  }
+
+  #buildBody(
+    request: CompletionRequest,
+    model: string,
+    defaultMaxTokens: number,
+    stream: boolean,
+  ): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model,
+      max_completion_tokens: request.maxTokens ?? defaultMaxTokens,
+      messages: toOpenAIMessages(request),
+    };
+    if (stream) {
+      body.stream = true;
+    }
+    return body;
+  }
+}
+
+/**
+ * OpenAI carries the system prompt as a leading `system` message rather than a
+ * top-level field, so fold {@link CompletionRequest.system} into the array.
+ */
+function toOpenAIMessages(
+  request: CompletionRequest,
+): Array<{ role: string; content: string }> {
+  const messages: Array<{ role: string; content: string }> =
+    request.messages.map((message: Message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+  if (request.system !== undefined) {
+    messages.unshift({ role: "system", content: request.system });
+  }
+  return messages;
+}
+
+async function requestError(response: Response): Promise<Error> {
+  const detail = await response.text();
+  return new Error(`OpenAI request failed (${response.status}): ${detail}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? (value as unknown[]) : [];
+}
+
+function firstChoice(data: unknown): Record<string, unknown> | undefined {
+  const choices = isRecord(data) ? toArray(data.choices) : [];
+  const first = choices[0];
+  return isRecord(first) ? first : undefined;
+}
+
+function extractText(data: unknown): string {
+  const message = firstChoice(data)?.message;
+  if (isRecord(message) && typeof message.content === "string") {
+    return message.content;
+  }
+  return "";
+}
+
+function firstChoiceDelta(data: unknown): unknown {
+  return firstChoice(data)?.delta;
+}
+
+function extractModel(data: unknown, fallback: string): string {
+  if (isRecord(data) && typeof data.model === "string") {
+    return data.model;
+  }
+  return fallback;
+}
