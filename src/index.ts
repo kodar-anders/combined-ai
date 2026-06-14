@@ -16,6 +16,7 @@ export type {
 
 export { type AnthropicProviderOptions } from "./providers/anthropic";
 export { type OpenAIProviderOptions } from "./providers/openai";
+export { type GeminiProviderOptions } from "./providers/gemini";
 
 export {
   ProviderRegistry,
