@@ -5,8 +5,9 @@ interface. It lets you talk to a provider through a single, consistent contract
 today, and is being built toward **combining multiple providers on one prompt**.
 
 > **Status: early.** The core abstraction and two providers (Anthropic / Claude
-> and OpenAI) are in place, with completion and streaming. Provider selection and
-> multi-provider combination are planned — see [Roadmap](#roadmap).
+> and OpenAI) are in place, with completion and streaming, plus a registry to
+> select a provider by name. Multi-provider combination is planned — see
+> [Roadmap](#roadmap).
 
 ## Features
 
@@ -15,6 +16,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
 - `stream()` — run a prompt, receive text deltas as they arrive.
 - **Anthropic (Claude)** and **OpenAI** providers, talking to their HTTP APIs
   directly over the global `fetch` — no SDK dependency.
+- `ProviderRegistry` — a single point of access: configure your providers, then
+  select one by name.
 - Dual ESM + CJS package with TypeScript types.
 
 ## Requirements
@@ -33,19 +36,23 @@ npm install git+ssh://git@github.com:kodar-anders/combined-ai.git
 
 ## Usage
 
-The library never reads environment variables — you always pass the API key in
-explicitly.
+The library is a single point of access to its providers: you configure a
+`ProviderRegistry` with the providers you want, then `select()` one by name. The
+concrete provider classes are intentionally not exported — you never construct
+them yourself.
 
-Both providers implement the same `Provider` contract, so they are
-interchangeable — swap `AnthropicProvider` for `OpenAIProvider` (and pass the
-matching key) without changing the calling code.
+The library never reads environment variables — you always pass the API keys in
+explicitly via the config.
 
 ```ts
-import { AnthropicProvider } from "combined-ai";
+import { ProviderRegistry } from "combined-ai";
 
-const provider = new AnthropicProvider({
-  apiKey: process.env.ANTHROPIC_API_KEY!, // your key, supplied by your app
+const registry = new ProviderRegistry({
+  anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! },
+  openai: { apiKey: process.env.OPENAI_API_KEY! },
 });
+
+const provider = registry.select("anthropic"); // throws if not configured
 
 // Non-streaming: get the full response text.
 const result = await provider.complete({
@@ -62,21 +69,43 @@ for await (const delta of provider.stream({
 }
 ```
 
-### Constructor options
+Every provider returned by `select()` implements the same `Provider` contract,
+so the calling code is identical no matter which one you pick.
+
+### Provider configuration
+
+Pass an entry for each provider you want to register. Omit a provider to leave
+it out; `select()`/`has()` reflect only what you configured.
 
 ```ts
-new AnthropicProvider({
-  apiKey: "sk-ant-...", // required
-  model: "claude-opus-4-8", // optional; this is the default
-  baseUrl: "https://api.anthropic.com", // optional; this is the default
-});
-
-new OpenAIProvider({
-  apiKey: "sk-...", // required
-  model: "gpt-4.1", // optional; this is the default
-  baseUrl: "https://api.openai.com", // optional; this is the default
+new ProviderRegistry({
+  anthropic: {
+    apiKey: "sk-ant-...", // required
+    model: "claude-opus-4-8", // optional; this is the default
+    baseUrl: "https://api.anthropic.com", // optional; this is the default
+  },
+  openai: {
+    apiKey: "sk-...", // required
+    model: "gpt-4.1", // optional; this is the default
+    baseUrl: "https://api.openai.com", // optional; this is the default
+  },
 });
 ```
+
+### Inspecting the registry
+
+```ts
+const registry = new ProviderRegistry({ anthropic: { apiKey: key } });
+
+registry.has("openai"); // -> false (not configured)
+registry.names(); // -> the configured provider names, e.g. ["anthropic"]
+registry.select("openai");
+// throws: No provider "openai" configured. Configured: anthropic
+```
+
+`select()` only accepts a known provider name (`"anthropic"` | `"openai"`), so
+typos are caught at compile time; selecting a name you didn't configure throws
+at runtime.
 
 ### Request options
 
@@ -93,9 +122,14 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 
 Exported from the package entry point:
 
-- `AnthropicProvider`, `AnthropicProviderOptions`
-- `OpenAIProvider`, `OpenAIProviderOptions`
-- Types: `Provider`, `Message`, `Role`, `CompletionRequest`, `CompletionResult`
+- `ProviderRegistry` — the single entry point.
+- Config types: `ProviderRegistryConfig`, `ProviderName`,
+  `AnthropicProviderOptions`, `OpenAIProviderOptions`.
+- Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
+  `CompletionResult`.
+
+The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`) are
+**not** exported — they are constructed internally by the registry.
 
 ## Development
 
@@ -139,7 +173,7 @@ cheap model and a tiny token cap, so cost is negligible.
 
 - [x] Core `Provider` abstraction + Anthropic provider (completion + streaming).
 - [x] A second provider (OpenAI) behind the same interface.
-- [ ] Provider registry / selection by name.
+- [x] Provider registry / selection by name.
 - [ ] Combine multiple providers on one prompt.
 
 ## License

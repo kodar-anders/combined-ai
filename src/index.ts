@@ -1,6 +1,9 @@
 /**
  * Public entry point for the library.
- * Re-export the modules that make up the package's public API from here.
+ *
+ * The package is a single point of access to its AI providers: you configure a
+ * {@link ProviderRegistry} and select a provider by name. The concrete provider
+ * classes are intentionally not exported.
  */
 
 export type {
@@ -11,9 +14,11 @@ export type {
   Role,
 } from "./types";
 
-export {
-  AnthropicProvider,
-  type AnthropicProviderOptions,
-} from "./providers/anthropic";
+export { type AnthropicProviderOptions } from "./providers/anthropic";
+export { type OpenAIProviderOptions } from "./providers/openai";
 
-export { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
+export {
+  ProviderRegistry,
+  type ProviderName,
+  type ProviderRegistryConfig,
+} from "./registry";
