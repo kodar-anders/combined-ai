@@ -46,6 +46,7 @@ export class GeminiProvider implements Provider {
       method: "POST",
       headers: this.#headers(),
       body: JSON.stringify(this.#buildBody(request, DEFAULT_MAX_TOKENS)),
+      signal: request.signal,
     });
 
     if (!response.ok) {
@@ -67,6 +68,7 @@ export class GeminiProvider implements Provider {
       method: "POST",
       headers: this.#headers(),
       body: JSON.stringify(this.#buildBody(request, DEFAULT_STREAM_MAX_TOKENS)),
+      signal: request.signal,
     });
 
     if (!response.ok) {

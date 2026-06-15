@@ -94,6 +94,29 @@ describe("consensus", () => {
     expect(result.drafts.every((d) => d.status === "ok")).toBe(true);
   });
 
+  it("threads the abort signal into every phase's completion", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+    ];
+
+    const controller = new AbortController();
+    await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+      signal: controller.signal,
+    });
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.request.signal === controller.signal)).toBe(
+      true,
+    );
+  });
+
   it("feeds attributed drafts into critique and drafts + critiques into synthesis", async () => {
     const calls: Call[] = [];
     const roster = [

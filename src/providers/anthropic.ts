@@ -51,6 +51,7 @@ export class AnthropicProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
         ),
+        signal: request.signal,
       },
     );
 
@@ -78,6 +79,7 @@ export class AnthropicProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
         ),
+        signal: request.signal,
       },
     );
 

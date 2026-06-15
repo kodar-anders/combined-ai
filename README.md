@@ -380,12 +380,35 @@ is no terminal event (the result is the return value), and errors thrown from
 
 Both `complete()` and `stream()` take a `CompletionRequest`:
 
-| Field       | Type        | Notes                                                          |
-| ----------- | ----------- | -------------------------------------------------------------- |
-| `messages`  | `Message[]` | Required. `{ role: "user" \| "assistant"; content: string }`   |
-| `system`    | `string`    | Optional system prompt.                                        |
-| `model`     | `string`    | Optional per-request model override.                           |
-| `maxTokens` | `number`    | Optional output cap (defaults: 16000 complete / 64000 stream). |
+| Field       | Type          | Notes                                                                          |
+| ----------- | ------------- | ------------------------------------------------------------------------------ |
+| `messages`  | `Message[]`   | Required. `{ role: "user" \| "assistant"; content: string }`                   |
+| `system`    | `string`      | Optional system prompt.                                                        |
+| `model`     | `string`      | Optional per-request model override.                                           |
+| `maxTokens` | `number`      | Optional output cap (defaults: 16000 complete / 64000 stream).                 |
+| `signal`    | `AbortSignal` | Optional. Aborts the request (and an in-flight `stream()` read) when it fires. |
+
+> **Timeouts & cancellation:** pass a `signal` to bound or cancel a call. For a
+> timeout, use `AbortSignal.timeout(ms)`; to cancel manually, use an
+> `AbortController`. An aborted call rejects with a transport `ProviderError`
+> (`err.kind === "transport"`) whose `cause` is the abort reason.
+>
+> ```ts
+> // Time out a single completion after 30s:
+> const result = await provider.complete({
+>   messages: [{ role: "user", content: "…" }],
+>   signal: AbortSignal.timeout(30_000),
+> });
+>
+> // Cancel a streaming call from elsewhere:
+> const controller = new AbortController();
+> const stream = provider.stream({ messages, signal: controller.signal });
+> // …later: controller.abort();
+> ```
+>
+> `combine()` accepts a `signal` on its request too (it extends
+> `CompletionRequest`); the same signal is threaded into every participant call,
+> so aborting it cancels the whole run at once.
 
 > **Gemini note:** Gemini 2.5 models are _thinking_ models, and their internal
 > thinking tokens count against `maxTokens` (Gemini's `maxOutputTokens`). A very

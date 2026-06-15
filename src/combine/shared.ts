@@ -53,7 +53,7 @@ const SANITIZE_FRAMING =
   "substance, wording, and length as much as possible; change only what is " +
   "needed. Output only the rewritten answer, with no preamble.";
 
-/** Build a per-phase completion request, carrying over the caller's model/maxTokens. */
+/** Build a per-phase completion request, carrying over the caller's model/maxTokens/signal. */
 export function completionFor(
   request: CombineRequest,
   system: string | undefined,
@@ -68,6 +68,11 @@ export function completionFor(
   }
   if (request.maxTokens !== undefined) {
     completion.maxTokens = request.maxTokens;
+  }
+  // Carry the abort signal into every phase so one signal cancels the whole
+  // combine (aborting all in-flight provider calls at once).
+  if (request.signal !== undefined) {
+    completion.signal = request.signal;
   }
   return completion;
 }

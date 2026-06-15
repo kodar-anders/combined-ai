@@ -11,6 +11,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 - Core, provider-agnostic contract in `src/types.ts`: `Provider`, `Message`,
   `Role`, `CompletionRequest`, `CompletionResult`.
+- `CompletionRequest.signal` (`AbortSignal`) — timeout/cancellation support.
+  Forwarded to every provider `fetch` (both `complete()` and `stream()`) and
+  threaded through `combine()` (it extends `CompletionRequest`), so one signal
+  cancels every participant call at once. Use `AbortSignal.timeout(ms)` for a
+  timeout; an aborted call rejects with a transport `ProviderError`.
 - `ProviderRegistry` (`src/registry.ts`) — the package's single point of access
   to its providers. You configure it with `{ anthropic?, openai?, gemini? }`
   (each a provider options object with `apiKey` and optional `model`/`baseUrl`);
