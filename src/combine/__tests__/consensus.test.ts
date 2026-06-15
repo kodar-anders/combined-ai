@@ -347,6 +347,56 @@ describe("consensus", () => {
     expect(result.synthesizer).toBe("openai");
   });
 
+  it("drops empty-text drafts from the survivors", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        // Resolves successfully but with an empty draft.
+        provider: fakeProvider("anthropic", calls, undefined, "draft"),
+      },
+      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+    ];
+
+    await consensus(roster, "openai", {
+      ...PROMPT,
+      participants: ["anthropic", "openai", "gemini"],
+    });
+
+    // The empty draft is excluded: only the two non-empty survivors critique...
+    expect(calls.filter((c) => c.phase === "critique")).toHaveLength(2);
+    // ...and the blank answer is never rendered into the critique/synthesis body.
+    const critiqueBody =
+      calls.find((c) => c.phase === "critique")?.request.messages[0]?.content ??
+      "";
+    expect(critiqueBody).not.toContain("Answer from anthropic");
+    expect(critiqueBody).toContain("openai:draft");
+    expect(critiqueBody).toContain("gemini:draft");
+  });
+
+  it("counts an empty draft as a non-survivor for minParticipants", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls, undefined, "draft"),
+      },
+      {
+        name: "openai" as const,
+        provider: fakeProvider("openai", calls, undefined, "draft"),
+      },
+      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+    ];
+
+    await expect(
+      consensus(roster, "gemini", {
+        ...PROMPT,
+        participants: ["anthropic", "openai", "gemini"],
+      }),
+    ).rejects.toThrow(/only 1 of 3/);
+  });
+
   it("throws when fewer than minParticipants produce a draft", async () => {
     const calls: Call[] = [];
     const roster = [

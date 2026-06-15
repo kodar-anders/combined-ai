@@ -305,9 +305,10 @@ Behavior notes:
   array, a `minParticipants` that isn't a positive integer or exceeds the
   participant count, a `synthesizer` that isn't a participant, or an unknown
   `strategy`.
-- **Partial failures are tolerated.** A provider that fails to draft is recorded
-  in `result.drafts` (as `status: "failed"`) and dropped from the rest of the
-  round; the round proceeds with the survivors as long as at least
+- **Partial failures are tolerated.** A provider that fails to draft — or
+  succeeds but returns empty text — is recorded in `result.drafts` and dropped
+  from the rest of the round; the round proceeds with the survivors as long as
+  at least
   `minParticipants` produced a draft (otherwise `combine()` throws). Failed
   critiques are likewise non-fatal. If the chosen synthesizer fails **or returns
   empty text**, it falls back to the next surviving participant.
