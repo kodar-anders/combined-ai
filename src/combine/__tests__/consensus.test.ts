@@ -4,6 +4,7 @@ import {
   type CompletionRequest,
   type CompletionResult,
   type Provider,
+  type Usage,
 } from "../../types";
 import { consensus } from "../consensus";
 import { type CombineEvent } from "../index";
@@ -32,6 +33,7 @@ function fakeProvider(
   calls: Call[],
   failOn?: Phase,
   emptyOn?: Phase,
+  usage?: Usage,
 ): Provider {
   return {
     name,
@@ -42,14 +44,16 @@ function fakeProvider(
       if (failOn === phase) {
         throw new Error(`${name} failed during ${phase}`);
       }
-      if (emptyOn === phase) {
-        return { text: "", model: `${name}-model` };
-      }
+      // An empty response is still a billed call, so it carries usage when set.
       const text =
-        phase === "sanitize"
-          ? (request.messages[0]?.content ?? "")
-          : `${name}:${phase}`;
-      return { text, model: `${name}-model` };
+        emptyOn === phase
+          ? ""
+          : phase === "sanitize"
+            ? (request.messages[0]?.content ?? "")
+            : `${name}:${phase}`;
+      return usage === undefined
+        ? { text, model: `${name}-model` }
+        : { text, model: `${name}-model`, usage };
     },
     // eslint-disable-next-line @typescript-eslint/require-await, require-yield
     async *stream(): AsyncGenerator<string, void, void> {
@@ -481,6 +485,53 @@ describe("consensus", () => {
     expect(calls.filter((c) => c.phase === "synth")).toHaveLength(2);
   });
 
+  it("counts a billed-but-empty synthesis attempt in the aggregated usage", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        // Synthesis resolves empty (still a billed call) and falls back to openai.
+        provider: fakeProvider("anthropic", calls, undefined, "synth", {
+          inputTokens: 2,
+          outputTokens: 3,
+          totalTokens: 5,
+        }),
+      },
+      {
+        name: "openai" as const,
+        provider: fakeProvider("openai", calls, undefined, undefined, {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+      },
+    ];
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    expect(result.synthesizer).toBe("openai");
+    // anthropic makes 3 billed calls (draft, critique, empty synth) — the empty
+    // synth must still be counted; openai makes 4 (draft, critique, synth, sanitize).
+    expect(result.usage?.byParticipant.anthropic).toEqual({
+      inputTokens: 6,
+      outputTokens: 9,
+      totalTokens: 15,
+    });
+    expect(result.usage?.byParticipant.openai).toEqual({
+      inputTokens: 4,
+      outputTokens: 4,
+      totalTokens: 8,
+    });
+    expect(result.usage?.total).toEqual({
+      inputTokens: 10,
+      outputTokens: 13,
+      totalTokens: 23,
+    });
+  });
+
   it("keeps anonymized critique letters aligned with answer letters when a middle critique fails", async () => {
     const calls: Call[] = [];
     const roster = [
@@ -510,6 +561,68 @@ describe("consensus", () => {
     expect(synthBody).toContain("gemini:critique");
     // openai (Answer B) failed its critique, so there is no "Critique B".
     expect(synthBody).not.toContain("### Critique B");
+  });
+
+  it("aggregates token usage per participant and overall", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls, undefined, undefined, {
+          inputTokens: 2,
+          outputTokens: 3,
+          totalTokens: 5,
+        }),
+      },
+      {
+        name: "openai" as const,
+        provider: fakeProvider("openai", calls, undefined, undefined, {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+      },
+    ];
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    // anthropic makes 4 calls (draft, critique, synth, sanitize); openai 2 (draft, critique).
+    expect(result.usage?.byParticipant.anthropic).toEqual({
+      inputTokens: 8,
+      outputTokens: 12,
+      totalTokens: 20,
+    });
+    expect(result.usage?.byParticipant.openai).toEqual({
+      inputTokens: 2,
+      outputTokens: 2,
+      totalTokens: 4,
+    });
+    expect(result.usage?.total).toEqual({
+      inputTokens: 10,
+      outputTokens: 14,
+      totalTokens: 24,
+    });
+  });
+
+  it("leaves usage undefined when no provider reports it", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+    ];
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    expect(result.usage).toBeUndefined();
   });
 
   it("emits phase and per-participant progress events", async () => {

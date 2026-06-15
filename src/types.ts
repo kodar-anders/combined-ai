@@ -41,6 +41,17 @@ export type CompletionRequest = {
  */
 export type FinishReason = "stop" | "length" | "content_filter" | "other";
 
+/**
+ * Token usage for a single completion. `totalTokens` is the provider's own total
+ * when it reports one (Gemini's includes thinking tokens, so it can exceed
+ * input + output), otherwise `inputTokens + outputTokens`.
+ */
+export type Usage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
 export type CompletionResult = {
   text: string;
   /** The model that actually produced the response. */
@@ -58,6 +69,8 @@ export type CompletionResult = {
    * `message.refusal`). When set, `finishReason` is `"content_filter"`.
    */
   refusal?: string;
+  /** Token usage for this completion, or `undefined` if the provider reported none. */
+  usage?: Usage;
 };
 
 export type Provider = {

@@ -19,6 +19,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   truncated/refused answer apart from a genuinely empty one instead of seeing a
   bare `text: ""`. An OpenAI `message.refusal` (and Anthropic `type: "refusal"`
   blocks) are surfaced on `refusal` and force `finishReason` to `"content_filter"`.
+- Token usage accounting. `CompletionResult.usage` (a `Usage` of
+  `inputTokens`/`outputTokens`/`totalTokens`) is parsed from each provider's
+  response (Anthropic `usage`, OpenAI `usage`, Gemini `usageMetadata` — whose
+  `totalTokenCount` includes thinking tokens and is kept verbatim), or
+  `undefined` when none is reported. `CombineResult.usage` (a `CombineUsage`
+  with `total` plus a per-participant `byParticipant` breakdown) aggregates every
+  model call a combine makes — drafts, critiques, synthesis, and the sanitize
+  pass for consensus; every stage plus sanitize for pipeline — so the true,
+  several-times-one-call cost of a combine is visible.
 - `CompletionRequest.signal` (`AbortSignal`) — timeout/cancellation support.
   Forwarded to every provider `fetch` (both `complete()` and `stream()`) and
   threaded through `combine()` (it extends `CompletionRequest`), so one signal

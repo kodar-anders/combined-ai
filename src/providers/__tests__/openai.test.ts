@@ -170,6 +170,29 @@ describe("OpenAIProvider.complete", () => {
     expect(result.refusal).toBe("I won't do that.");
   });
 
+  it("parses token usage from the response, keeping the provider's total", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [{ finish_reason: "stop", message: { content: "Hi" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    });
+  });
+
   it("throws a typed ProviderError parsing the OpenAI error body", async () => {
     mockFetch(() => ({
       ok: false,

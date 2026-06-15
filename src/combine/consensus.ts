@@ -15,13 +15,16 @@ import {
   type ParticipantOutcome,
 } from "./index";
 import {
+  aggregateUsage,
   composeSystem,
   completionFor,
   makeEmitter,
+  outcomeUsage,
   renderConversation,
   type RosterEntry,
   runOutcome,
   sanitizeAnswer,
+  type UsageEntry,
 } from "./shared";
 import { type ProviderName } from "../registry";
 import { type CompletionResult, type Provider } from "../types";
@@ -132,6 +135,7 @@ export async function consensus(
       model: firstSurvivor.result.model,
       drafts,
       critiques: [],
+      usage: aggregateUsage(outcomeUsage(drafts)),
     };
   }
   if (survivors.length < minParticipants) {
@@ -173,6 +177,10 @@ export async function consensus(
   const synthSystem = composeSystem(request.system, SYNTH_FRAMING);
 
   let lastError: Error | undefined;
+  // Usage from synthesis attempts that were billed but discarded (an empty
+  // synthesis that fell back to the next survivor) — counted so the reported
+  // cost reflects every call made, not just the winning one.
+  const synthUsage: UsageEntry[] = [];
   for (const candidate of synthesizerOrder(survivors, synthesizer)) {
     try {
       const result = await candidate.provider.complete(
@@ -180,21 +188,33 @@ export async function consensus(
           { role: "user", content: synthBody },
         ]),
       );
+      synthUsage.push({ provider: candidate.name, usage: result.usage });
       // A resolved-but-empty synthesis (e.g. Gemini consuming the whole token
       // budget on thinking) is treated as a failure so the next survivor is tried.
       if (result.text.trim() === "") {
         lastError = new Error(`${candidate.name} produced an empty synthesis`);
         continue;
       }
+      // Second pass strips any process narration the synthesis framing
+      // failed to suppress (e.g. "synthesizes the drafts", "Answer A").
+      const sanitized = await sanitizeAnswer(
+        candidate.provider,
+        request,
+        result.text,
+      );
+      synthUsage.push({ provider: candidate.name, usage: sanitized.usage });
       return {
-        // Second pass strips any process narration the synthesis framing
-        // failed to suppress (e.g. "synthesizes the drafts", "Answer A").
-        text: await sanitizeAnswer(candidate.provider, request, result.text),
+        text: sanitized.text,
         strategy: "consensus",
         synthesizer: candidate.name,
         model: result.model,
         drafts,
         critiques,
+        usage: aggregateUsage([
+          ...outcomeUsage(drafts),
+          ...outcomeUsage(critiques),
+          ...synthUsage,
+        ]),
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));

@@ -48,6 +48,9 @@ today, and is being built toward **combining multiple providers on one prompt**.
   `Retry-After`), configurable per provider.
 - `finishReason` on every `complete()` result — tells truncation/refusal apart
   from a genuinely empty answer instead of returning a bare `text: ""`.
+- Token usage accounting — `usage` on every `complete()` result, and aggregated
+  per-participant + total `usage` on a `combine()` result so you can see the
+  several-times-one-call cost of a combine.
 - `registry.combine()` — make several providers **cooperate** on one prompt
   using a strategy: **consensus** (draft → critique → synthesize) or **pipeline**
   (a conveyor belt of providers refining one answer in sequence).
@@ -315,6 +318,10 @@ Behavior notes:
   critiques are likewise non-fatal. If the chosen synthesizer fails **or returns
   empty text**, it falls back to the next surviving participant.
 - **A single participant** degrades to a plain completion (no critique/synthesis).
+- **Token usage is aggregated.** `result.usage` sums every model call the run made
+  (drafts, critiques, synthesis, and the sanitize pass) into a `total` plus a
+  per-participant `byParticipant` breakdown — `undefined` if no provider reported
+  usage.
 
 #### Pipeline
 
@@ -356,6 +363,9 @@ Behavior notes:
   text unchanged, is returned as-is (no wasted call).
 - `synthesizer`, `attribution`, and `minParticipants` are consensus-specific and
   ignored.
+- **Token usage is aggregated.** `result.usage` sums every stage (plus the
+  sanitize pass) into a `total` and a per-participant `byParticipant` breakdown —
+  `undefined` if no provider reported usage.
 
 ### Combine progress events
 
@@ -458,6 +468,7 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 | `finishReason`    | `FinishReason` | Normalized stop reason, or `undefined` if none was reported (see below).                   |
 | `rawFinishReason` | `string`       | The provider's exact stop-reason string (e.g. `"max_tokens"`, `"length"`, `"MAX_TOKENS"`). |
 | `refusal`         | `string`       | The refusal message when the model declined (currently OpenAI's `message.refusal`).        |
+| `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`), or `undefined` if none reported. |
 
 `FinishReason` is a provider-agnostic union mapped from each provider's field
 (Anthropic `stop_reason`, OpenAI `finish_reason`, Gemini `finishReason`):
@@ -490,13 +501,13 @@ Exported from the package entry point:
 - Config types: `ProviderRegistryConfig`, `ProviderName`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
-  `CompletionResult`, `FinishReason`.
+  `CompletionResult`, `FinishReason`, `Usage`.
 - `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
   type — see [Error handling](#error-handling).
 - `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).
 - Combine types: `CombineRequest`, `CombineResult` (= `ConsensusResult` |
-  `PipelineResult`), `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
-  `CombineEvent`.
+  `PipelineResult`), `CombineUsage`, `ParticipantOutcome`, `StrategyName`,
+  `CombineOptions`, `CombineEvent`.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GeminiProvider`) are **not** exported — they are constructed internally by the

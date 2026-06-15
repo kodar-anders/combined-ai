@@ -6,7 +6,11 @@
  */
 
 import { type ProviderName } from "../registry";
-import { type CompletionRequest, type CompletionResult } from "../types";
+import {
+  type CompletionRequest,
+  type CompletionResult,
+  type Usage,
+} from "../types";
 
 /** The cooperation strategies the registry knows how to run. */
 export const STRATEGY_NAMES = ["consensus", "pipeline"] as const;
@@ -52,6 +56,19 @@ export type ParticipantOutcome =
   | { provider: ProviderName; status: "ok"; result: CompletionResult }
   | { provider: ProviderName; status: "failed"; error: Error };
 
+/**
+ * Aggregated token usage across all the model calls a combine made — the true
+ * cost of a run, which is several times one completion (a default 3-way
+ * consensus is ~8 calls: 3 drafts + 3 critiques + synthesis + sanitize).
+ * `undefined` if no participating provider reported usage.
+ */
+export type CombineUsage = {
+  /** Total usage summed across every call the combine made. */
+  total: Usage;
+  /** Usage per participant, summed across all of that participant's calls. */
+  byParticipant: Partial<Record<ProviderName, Usage>>;
+};
+
 /** The result of the `consensus` strategy (draft → critique → synthesize). */
 export type ConsensusResult = {
   /** The final synthesized answer. */
@@ -65,6 +82,8 @@ export type ConsensusResult = {
   drafts: ParticipantOutcome[];
   /** Phase 2 critiques, in surviving-participant order (includes any failures). */
   critiques: ParticipantOutcome[];
+  /** Aggregated token usage across every call, or `undefined` if none was reported. */
+  usage?: CombineUsage;
 };
 
 /** The result of the `pipeline` strategy (sequential refinement). */
@@ -78,6 +97,8 @@ export type PipelineResult = {
   model: string;
   /** Every stage in pipeline (participant) order, including any failures. */
   stages: ParticipantOutcome[];
+  /** Aggregated token usage across every stage, or `undefined` if none was reported. */
+  usage?: CombineUsage;
 };
 
 /**

@@ -13,6 +13,7 @@ export type {
   Message,
   Provider,
   Role,
+  Usage,
 } from "./types";
 
 export { ProviderError, type ProviderErrorKind } from "./errors";
@@ -33,6 +34,7 @@ export type {
   CombineOptions,
   CombineRequest,
   CombineResult,
+  CombineUsage,
   ConsensusResult,
   ParticipantOutcome,
   PipelineResult,

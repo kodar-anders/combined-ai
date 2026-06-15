@@ -7,6 +7,7 @@
 import {
   type CombineEvent,
   type CombineRequest,
+  type CombineUsage,
   type ParticipantOutcome,
 } from "./index";
 import { type ProviderName } from "../registry";
@@ -15,6 +16,7 @@ import {
   type CompletionResult,
   type Message,
   type Provider,
+  type Usage,
 } from "../types";
 
 /** A participant, kept with its resolved provider for the orchestration phases. */
@@ -110,17 +112,62 @@ export async function sanitizeAnswer(
   provider: Provider,
   request: CombineRequest,
   answer: string,
-): Promise<string> {
+): Promise<{ text: string; usage?: Usage }> {
   try {
     const result = await provider.complete(
       completionFor(request, composeSystem(request.system, SANITIZE_FRAMING), [
         { role: "user", content: answer },
       ]),
     );
-    return result.text.trim() === "" ? answer : result.text;
+    // The call was billed whether or not we keep its output, so report its usage.
+    return {
+      text: result.text.trim() === "" ? answer : result.text,
+      usage: result.usage,
+    };
   } catch {
-    return answer;
+    return { text: answer };
   }
+}
+
+/** A single model call's token usage, attributed to the participant that made it. */
+export type UsageEntry = { provider: ProviderName; usage?: Usage };
+
+/** Map per-participant outcomes to usage entries (a failed outcome has no usage). */
+export function outcomeUsage(outcomes: ParticipantOutcome[]): UsageEntry[] {
+  return outcomes.map((o) => ({
+    provider: o.provider,
+    usage: o.status === "ok" ? o.result.usage : undefined,
+  }));
+}
+
+/**
+ * Sum per-call usages into a {@link CombineUsage} (overall total + per-participant
+ * breakdown). Entries with no usage are ignored; returns `undefined` if no call
+ * reported any usage at all.
+ */
+export function aggregateUsage(
+  entries: UsageEntry[],
+): CombineUsage | undefined {
+  const byParticipant: Partial<Record<ProviderName, Usage>> = {};
+  const total: Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  for (const { provider, usage } of entries) {
+    if (usage === undefined) {
+      continue;
+    }
+    total.inputTokens += usage.inputTokens;
+    total.outputTokens += usage.outputTokens;
+    total.totalTokens += usage.totalTokens;
+    const acc = byParticipant[provider];
+    byParticipant[provider] = {
+      inputTokens: (acc?.inputTokens ?? 0) + usage.inputTokens,
+      outputTokens: (acc?.outputTokens ?? 0) + usage.outputTokens,
+      totalTokens: (acc?.totalTokens ?? 0) + usage.totalTokens,
+    };
+  }
+  // byParticipant is non-empty iff at least one entry carried usage.
+  return Object.keys(byParticipant).length === 0
+    ? undefined
+    : { total, byParticipant };
 }
 
 /** Render the original messages as the "question" block for later phases. */
