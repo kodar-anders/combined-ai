@@ -4,6 +4,7 @@ import {
   type CompletionRequest,
   type CompletionResult,
   type Provider,
+  type Usage,
 } from "../../types";
 import { type CombineEvent } from "../index";
 import { pipeline } from "../pipeline";
@@ -31,6 +32,7 @@ function fakeProvider(
   calls: Call[],
   failOn?: Phase,
   emptyOn?: Phase,
+  usage?: Usage,
 ): Provider {
   return {
     name,
@@ -48,7 +50,9 @@ function fakeProvider(
         phase === "sanitize"
           ? (request.messages[0]?.content ?? "")
           : `${name}:${phase}`;
-      return { text, model: `${name}-model` };
+      return usage === undefined
+        ? { text, model: `${name}-model` }
+        : { text, model: `${name}-model`, usage };
     },
     // eslint-disable-next-line @typescript-eslint/require-await, require-yield
     async *stream(): AsyncGenerator<string, void, void> {
@@ -158,6 +162,68 @@ describe("pipeline", () => {
     expect(calls[0]?.phase).toBe("first");
     expect(result.finalProvider).toBe("anthropic");
     expect(result.text).toBe("anthropic:first");
+  });
+
+  it("aggregates token usage per participant and overall, including the sanitize call", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls, undefined, undefined, {
+          inputTokens: 2,
+          outputTokens: 3,
+          totalTokens: 5,
+        }),
+      },
+      {
+        name: "openai" as const,
+        provider: fakeProvider("openai", calls, undefined, undefined, {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+      },
+    ];
+
+    const result = await pipeline(roster, {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    // anthropic writes the first answer (1 call); openai refines then sanitizes (2 calls).
+    expect(result.usage?.byParticipant.anthropic).toEqual({
+      inputTokens: 2,
+      outputTokens: 3,
+      totalTokens: 5,
+    });
+    expect(result.usage?.byParticipant.openai).toEqual({
+      inputTokens: 2,
+      outputTokens: 2,
+      totalTokens: 4,
+    });
+    expect(result.usage?.total).toEqual({
+      inputTokens: 4,
+      outputTokens: 5,
+      totalTokens: 9,
+    });
+  });
+
+  it("leaves usage undefined when no provider reports it", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        name: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+    ];
+
+    const result = await pipeline(roster, {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    expect(result.usage).toBeUndefined();
   });
 
   it("starts the pipeline at the first stage that produces an answer", async () => {

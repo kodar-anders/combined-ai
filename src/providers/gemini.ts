@@ -11,6 +11,7 @@ import {
   type FinishReason,
   type Message,
   type Provider,
+  type Usage,
 } from "../types";
 
 export type GeminiProviderOptions = {
@@ -74,6 +75,7 @@ export class GeminiProvider implements Provider {
       model: extractModel(data, model),
       finishReason: normalizeFinishReason(rawFinishReason),
       rawFinishReason,
+      usage: extractUsage(data),
     };
   }
 
@@ -245,6 +247,29 @@ function extractFinishReason(data: unknown): string | undefined {
     return feedback.blockReason;
   }
   return undefined;
+}
+
+/**
+ * Gemini reports `usageMetadata.promptTokenCount`/`candidatesTokenCount`/
+ * `totalTokenCount`. `totalTokenCount` includes thinking tokens, so it can
+ * exceed prompt + candidates — we keep the provider's own total verbatim.
+ */
+function extractUsage(data: unknown): Usage | undefined {
+  const usage = isRecord(data) ? data.usageMetadata : undefined;
+  if (!isRecord(usage)) {
+    return undefined;
+  }
+  const inputTokens =
+    typeof usage.promptTokenCount === "number" ? usage.promptTokenCount : 0;
+  const outputTokens =
+    typeof usage.candidatesTokenCount === "number"
+      ? usage.candidatesTokenCount
+      : 0;
+  const totalTokens =
+    typeof usage.totalTokenCount === "number"
+      ? usage.totalTokenCount
+      : inputTokens + outputTokens;
+  return { inputTokens, outputTokens, totalTokens };
 }
 
 /** Maps Gemini's `finishReason` (and prompt block reasons) onto the union. */

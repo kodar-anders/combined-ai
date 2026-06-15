@@ -10,6 +10,7 @@ import {
   type CompletionResult,
   type FinishReason,
   type Provider,
+  type Usage,
 } from "../types";
 
 export type AnthropicProviderOptions = {
@@ -77,6 +78,7 @@ export class AnthropicProvider implements Provider {
       finishReason: normalizeFinishReason(rawFinishReason),
       rawFinishReason,
       refusal: extractRefusal(data),
+      usage: extractUsage(data),
     };
   }
 
@@ -247,6 +249,19 @@ function normalizeFinishReason(
     default:
       return "other";
   }
+}
+
+/** Anthropic reports `usage.input_tokens`/`output_tokens`; it has no total field. */
+function extractUsage(data: unknown): Usage | undefined {
+  const usage = isRecord(data) ? data.usage : undefined;
+  if (!isRecord(usage)) {
+    return undefined;
+  }
+  const inputTokens =
+    typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+  const outputTokens =
+    typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
 }
 
 /** Text from any `type: "refusal"` content blocks `extractText` skips. */

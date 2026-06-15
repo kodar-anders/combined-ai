@@ -148,6 +148,43 @@ describe("AnthropicProvider.complete", () => {
     expect(result.refusal).toBe("I can't help with that.");
   });
 
+  it("parses token usage from the response", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          content: [{ type: "text", text: "Hi" }],
+          usage: { input_tokens: 12, output_tokens: 8 },
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage).toEqual({
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+    });
+  });
+
+  it("omits usage when the response carries none", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage).toBeUndefined();
+  });
+
   it("retries a 429 and returns the eventual success", async () => {
     jest.useFakeTimers();
     let call = 0;

@@ -22,9 +22,11 @@ import {
   type PipelineResult,
 } from "./index";
 import {
+  aggregateUsage,
   composeSystem,
   completionFor,
   makeEmitter,
+  outcomeUsage,
   renderConversation,
   type RosterEntry,
   runOutcome,
@@ -137,16 +139,22 @@ export async function pipeline(
     throw new Error("Pipeline failed: no participant produced an answer.");
   }
 
+  // Strip any process narration a refining stage may have leaked. Skipped when
+  // the answer needs no sanitizing (a lone first-stage answer, or an unchanged
+  // passthrough), so the extra model call only runs when it can matter.
+  const sanitized = current.needsSanitize
+    ? await sanitizeAnswer(current.provider, request, current.text)
+    : { text: current.text };
+
   return {
-    // Strip any process narration a refining stage may have leaked. Skipped when
-    // the answer needs no sanitizing (a lone first-stage answer, or an unchanged
-    // passthrough), so the extra model call only runs when it can matter.
-    text: current.needsSanitize
-      ? await sanitizeAnswer(current.provider, request, current.text)
-      : current.text,
+    text: sanitized.text,
     strategy: "pipeline",
     finalProvider: current.name,
     model: current.model,
     stages,
+    usage: aggregateUsage([
+      ...outcomeUsage(stages),
+      { provider: current.name, usage: sanitized.usage },
+    ]),
   };
 }

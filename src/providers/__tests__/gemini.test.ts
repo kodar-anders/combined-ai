@@ -176,6 +176,37 @@ describe("GeminiProvider.complete", () => {
     expect(result.rawFinishReason).toBe("SAFETY");
   });
 
+  it("parses usageMetadata, keeping the thinking-inclusive total verbatim", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [
+            { finishReason: "STOP", content: { parts: [{ text: "Hi" }] } },
+          ],
+          // totalTokenCount exceeds prompt + candidates because it includes
+          // thinking tokens; we keep the provider's own total.
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 5,
+            totalTokenCount: 42,
+          },
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 42,
+    });
+  });
+
   it("throws a typed ProviderError parsing the Gemini error body", async () => {
     mockFetch(() => ({
       ok: false,

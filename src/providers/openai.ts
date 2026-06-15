@@ -11,6 +11,7 @@ import {
   type FinishReason,
   type Message,
   type Provider,
+  type Usage,
 } from "../types";
 
 export type OpenAIProviderOptions = {
@@ -83,6 +84,7 @@ export class OpenAIProvider implements Provider {
           : "content_filter",
       rawFinishReason,
       refusal,
+      usage: extractUsage(data),
     };
   }
 
@@ -262,6 +264,23 @@ function normalizeFinishReason(
     default:
       return "other";
   }
+}
+
+/** OpenAI reports `usage.prompt_tokens`/`completion_tokens`/`total_tokens`. */
+function extractUsage(data: unknown): Usage | undefined {
+  const usage = isRecord(data) ? data.usage : undefined;
+  if (!isRecord(usage)) {
+    return undefined;
+  }
+  const inputTokens =
+    typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0;
+  const outputTokens =
+    typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0;
+  const totalTokens =
+    typeof usage.total_tokens === "number"
+      ? usage.total_tokens
+      : inputTokens + outputTokens;
+  return { inputTokens, outputTokens, totalTokens };
 }
 
 function extractRefusal(data: unknown): string | undefined {
