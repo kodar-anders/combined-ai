@@ -8,6 +8,13 @@
  */
 
 import {
+  type CombineOptions,
+  type CombineRequest,
+  type CombineResult,
+  STRATEGY_NAMES,
+} from "./combine";
+import { consensus } from "./combine/consensus";
+import {
   AnthropicProvider,
   type AnthropicProviderOptions,
 } from "./providers/anthropic";
@@ -56,6 +63,65 @@ export class ProviderRegistry {
       );
     }
     return provider;
+  }
+
+  /**
+   * Combine several configured providers to cooperate on one prompt using a
+   * cooperation strategy (currently consensus). Participants are picked by
+   * name and validated like {@link ProviderRegistry.select}; the synthesizer
+   * defaults to the first participant.
+   */
+  async combine(
+    request: CombineRequest,
+    options?: CombineOptions,
+  ): Promise<CombineResult> {
+    const [firstParticipant] = request.participants;
+    if (firstParticipant === undefined) {
+      throw new Error("combine requires at least one participant");
+    }
+    if (new Set(request.participants).size !== request.participants.length) {
+      throw new Error(
+        `combine participants must be unique: ${request.participants.join(", ")}`,
+      );
+    }
+    if (request.messages.length === 0) {
+      throw new Error("combine requires at least one message");
+    }
+    const { minParticipants } = request;
+    if (minParticipants !== undefined) {
+      if (!Number.isInteger(minParticipants) || minParticipants < 1) {
+        throw new Error("combine minParticipants must be a positive integer");
+      }
+      if (minParticipants > request.participants.length) {
+        throw new Error(
+          `combine minParticipants (${String(minParticipants)}) cannot exceed the number of participants (${String(request.participants.length)})`,
+        );
+      }
+    }
+    const knownStrategies: readonly string[] = STRATEGY_NAMES;
+    if (
+      request.strategy !== undefined &&
+      !knownStrategies.includes(request.strategy)
+    ) {
+      throw new Error(
+        `Unknown combine strategy "${request.strategy}". Known: ${STRATEGY_NAMES.join(", ")}`,
+      );
+    }
+
+    const roster = request.participants.map((name) => ({
+      name,
+      provider: this.select(name),
+    }));
+    const synthesizer = request.synthesizer ?? firstParticipant;
+    if (!request.participants.includes(synthesizer)) {
+      throw new Error(
+        `Synthesizer "${synthesizer}" must be one of the participants: ${request.participants.join(", ")}`,
+      );
+    }
+
+    // Only the consensus strategy exists today; future strategies
+    // (conveyor belt, court) branch here on `request.strategy`.
+    return consensus(roster, synthesizer, request, options?.onEvent);
   }
 
   /** Whether a provider is configured under `name`. */

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@jest/globals";
 
+import { type StrategyName } from "../combine";
 import { ProviderRegistry } from "../registry";
+
+const PROMPT = {
+  messages: [{ role: "user" as const, content: "What is 2 + 2?" }],
+};
 
 describe("ProviderRegistry", () => {
   it("constructs and selects a configured provider by name", () => {
@@ -54,5 +59,91 @@ describe("ProviderRegistry", () => {
     expect(() => registry.select("anthropic")).toThrow(
       'No provider "anthropic" configured. Configured: (none)',
     );
+  });
+});
+
+describe("ProviderRegistry.combine", () => {
+  it("throws when no participants are given", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "k" } });
+
+    await expect(
+      registry.combine({ ...PROMPT, participants: [] }),
+    ).rejects.toThrow(/at least one participant/);
+  });
+
+  it("throws when the synthesizer is not among the participants", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic"],
+        synthesizer: "openai",
+      }),
+    ).rejects.toThrow(/must be one of the participants/);
+  });
+
+  it("throws on duplicate participants", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "anthropic"],
+      }),
+    ).rejects.toThrow(/must be unique/);
+  });
+
+  it("throws on an empty messages array", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({ messages: [], participants: ["anthropic"] }),
+    ).rejects.toThrow(/at least one message/);
+  });
+
+  it("throws on a non-positive minParticipants", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        minParticipants: 0,
+      }),
+    ).rejects.toThrow(/positive integer/);
+  });
+
+  it("throws when minParticipants exceeds the participant count", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        minParticipants: 3,
+      }),
+    ).rejects.toThrow(/cannot exceed/);
+  });
+
+  it("throws on an unknown strategy", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic"],
+        strategy: "court" as unknown as StrategyName,
+      }),
+    ).rejects.toThrow(/Unknown combine strategy/);
   });
 });
