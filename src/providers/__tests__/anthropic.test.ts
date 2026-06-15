@@ -88,6 +88,23 @@ describe("AnthropicProvider.complete", () => {
     expect(body.max_tokens).toBe(100);
   });
 
+  it("forwards an abort signal to fetch", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const controller = new AbortController();
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      signal: controller.signal,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBe(controller.signal);
+  });
+
   it("throws a typed ProviderError on a non-2xx response", async () => {
     mockFetch(() => ({
       ok: false,
@@ -155,6 +172,28 @@ describe("AnthropicProvider.stream", () => {
     const body = JSON.parse(init.body as string);
     expect(body.stream).toBe(true);
     expect(body.max_tokens).toBe(64000);
+  });
+
+  it("forwards an abort signal to fetch", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      body: sseStream([
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    }));
+
+    const controller = new AbortController();
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const deltas: string[] = [];
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+      signal: controller.signal,
+    })) {
+      deltas.push(delta);
+    }
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBe(controller.signal);
   });
 
   it("skips blank and non-JSON data lines mid-stream", async () => {

@@ -20,6 +20,12 @@ export type CompletionRequest = {
   model?: string;
   /** Override the provider's default output-token cap. */
   maxTokens?: number;
+  /**
+   * Abort the request (and, for `stream()`, the in-flight read) when this signal
+   * fires. For a timeout, pass `AbortSignal.timeout(ms)`. An aborted request
+   * rejects with a transport `ProviderError` whose `cause` is the abort reason.
+   */
+  signal?: AbortSignal;
 };
 
 export type CompletionResult = {

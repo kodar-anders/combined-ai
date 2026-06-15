@@ -105,6 +105,23 @@ describe("OpenAIProvider.complete", () => {
     expect(body.max_completion_tokens).toBe(100);
   });
 
+  it("forwards an abort signal to fetch", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+
+    const controller = new AbortController();
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      signal: controller.signal,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBe(controller.signal);
+  });
+
   it("throws a typed ProviderError parsing the OpenAI error body", async () => {
     mockFetch(() => ({
       ok: false,
