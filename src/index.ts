@@ -29,6 +29,8 @@ export type {
   CombineOptions,
   CombineRequest,
   CombineResult,
+  ConsensusResult,
   ParticipantOutcome,
+  PipelineResult,
   StrategyName,
 } from "./combine";

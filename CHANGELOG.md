@@ -79,12 +79,32 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   New types `CombineRequest`, `CombineResult`, `ParticipantOutcome`, and
   `StrategyName` (in `src/combine/`) are exported from the entry point. Uses
   only `complete()` — no streaming for combine yet.
+- Second combine strategy, **pipeline** (`strategy: "pipeline"`) — a conveyor
+  belt of providers that refine one answer in sequence. The first participant
+  writes an initial answer; each later participant receives the question plus the
+  current running answer and improves it (the refine framing treats the current
+  answer as a strong baseline to preserve, since there is no downstream
+  synthesizer to catch a regression); the last stage to produce an answer is the
+  final answer. `participants` order is the conveyor order. A failed or
+  empty-output stage is recorded and the previous answer carries forward; the run
+  fails only if no stage produces an answer. When a refining stage actually
+  changed the answer it gets the same sanitizing pass as consensus to strip
+  process narration (skipped for a first-stage answer or an unchanged
+  passthrough, so the extra call only runs when it can matter). `synthesizer`,
+  `attribution`, and `minParticipants` are consensus-specific — validated and
+  applied only on the consensus path, ignored by pipeline. The strategy emits
+  `stage` progress events (provider, status, 0-based `index`).
+- **Breaking:** `CombineResult` is now a union discriminated on `strategy` —
+  `ConsensusResult` (`synthesizer`, `drafts`, `critiques`) and `PipelineResult`
+  (`finalProvider`, `stages`). Narrow on `result.strategy` to reach the
+  strategy-specific fields. New types `ConsensusResult` and `PipelineResult` are
+  exported; `CombineEvent` gains the `stage` variant.
 - Mocked unit tests for request building, SSE parsing, and error handling.
 - Opt-in live integration tests (`*.integration.test.ts`), double-gated on
   `RUN_LIVE_TESTS=1` + the provider key
   (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`). The consensus
-  combine suite (`consensus.integration`) is triple-gated, requiring all three
-  keys (it runs the full three-way draft → critique → synthesize flow).
+  combine suites (`consensus.integration`, `pipeline.integration`) are
+  triple-gated, requiring all three keys (they run the full three-way flow).
   The `test:integration` script runs all integration suites by default and
   accepts an optional filename pattern to narrow to one provider
   (e.g. `yarn test:integration openai.integration`).

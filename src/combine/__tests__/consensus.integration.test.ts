@@ -69,6 +69,13 @@ describeLive("ProviderRegistry.combine consensus (live)", () => {
         },
       );
 
+      // `combine()` returns a strategy-discriminated union; narrow to consensus.
+      if (result.strategy !== "consensus") {
+        throw new Error(
+          `expected a consensus result, got "${result.strategy}"`,
+        );
+      }
+
       // Surface the actual error behind any failed draft/critique (e.g. Gemini).
       for (const outcome of [...result.drafts, ...result.critiques]) {
         if (outcome.status === "failed") {
