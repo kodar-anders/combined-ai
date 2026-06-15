@@ -34,3 +34,4 @@ yarn-error.log*
 
 # Claude Code local (per-user) overrides
 .claude/settings.local.json
+CLAUDE.local.md
