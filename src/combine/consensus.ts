@@ -109,8 +109,12 @@ export async function consensus(
   );
   const drafts: ParticipantOutcome[] = draftResults.map((d) => d.outcome);
 
+  // Keep only drafts that succeeded AND produced non-empty text: an empty draft
+  // (e.g. Gemini spending its whole budget on thinking) would otherwise count
+  // toward minParticipants and render as a blank `### Answer A` into the critique
+  // prompts — wasted tokens and degraded consensus. Mirrors the synthesis guard.
   const survivors: Survivor[] = draftResults.flatMap((d) =>
-    d.outcome.status === "ok"
+    d.outcome.status === "ok" && d.outcome.result.text.trim() !== ""
       ? [{ provider: d.provider, name: d.name, result: d.outcome.result }]
       : [],
   );

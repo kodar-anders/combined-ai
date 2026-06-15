@@ -80,8 +80,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   Participants are picked by name (validated like `select()`); the synthesizer
   defaults to the first participant; drafts are attributed by provider name by
   default (`attribution: "anonymized"` opts out). Partial failures are tolerated
-  (failed participants are recorded and dropped, the round proceeds with the
-  survivors down to `minParticipants`, default 2; a synthesizer that fails or
+  (participants that fail or return empty-text drafts are recorded and dropped,
+  the round proceeds with the survivors down to `minParticipants`, default 2; a
+  synthesizer that fails or
   returns empty text falls back to the next survivor); a single participant
   degrades to a plain completion. Requests are validated up front (non-empty,
   unique participants; non-empty messages; positive `minParticipants` ≤ the
