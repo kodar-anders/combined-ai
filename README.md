@@ -54,13 +54,17 @@ today, and is being built toward **combining multiple providers on one prompt**.
 
 ## Installation
 
-Not published to a registry yet (private package). Install from the git repo:
-
 ```bash
-yarn add combined-ai@git+ssh://git@github.com:kodar-anders/combined-ai.git
+npm install combined-ai
 # or
-npm install git+ssh://git@github.com:kodar-anders/combined-ai.git
+yarn add combined-ai
+# or
+pnpm add combined-ai
 ```
+
+The published package is plain dual ESM + CJS in `dist/` — any package manager
+works as a consumer. (This repo uses Yarn 4 with Plug'n'Play for **development
+only**; you don't need it to install or use the library.)
 
 ## Usage
 

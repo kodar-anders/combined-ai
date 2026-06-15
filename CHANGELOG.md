@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-15
+
 ### Added
 
 - Core, provider-agnostic contract in `src/types.ts`: `Provider`, `Message`,
