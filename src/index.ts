@@ -23,3 +23,12 @@ export {
   type ProviderName,
   type ProviderRegistryConfig,
 } from "./registry";
+
+export type {
+  CombineEvent,
+  CombineOptions,
+  CombineRequest,
+  CombineResult,
+  ParticipantOutcome,
+  StrategyName,
+} from "./combine";

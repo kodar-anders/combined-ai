@@ -37,10 +37,54 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   `generationConfig.maxOutputTokens`. Note: Gemini 2.5 are thinking models, so
   thinking tokens count against `maxTokens` — a very small cap can leave the
   visible answer empty/truncated (documented in the README).
+- `ProviderRegistry.combine()` — combine multiple configured providers to
+  cooperate on one prompt using a strategy. The first strategy is **consensus**:
+  every participant drafts an answer in parallel, then every participant
+  critiques all drafts, then a designated synthesizer writes the final answer.
+  Participants are picked by name (validated like `select()`); the synthesizer
+  defaults to the first participant; drafts are attributed by provider name by
+  default (`attribution: "anonymized"` opts out). Partial failures are tolerated
+  (failed participants are recorded and dropped, the round proceeds with the
+  survivors down to `minParticipants`, default 2; a synthesizer that fails or
+  returns empty text falls back to the next survivor); a single participant
+  degrades to a plain completion. Requests are validated up front (non-empty,
+  unique participants; non-empty messages; positive `minParticipants` ≤ the
+  participant count; a participant synthesizer; a known strategy). The draft and
+  critique phases (the messages passed between providers) are instructed to omit
+  greetings, sign-offs, and preamble to save tokens; the user-facing synthesis is
+  not constrained.
+- Tuned consensus behaviour for answer quality: the draft/critique conciseness
+  directive now keeps reasoning, assumptions, and caveats (only ceremony is
+  stripped) so critics can check the _why_; drafts are **anonymized** to the
+  other providers by default (`Answer A/B/C` — opt out with
+  `attribution: "attributed"`; the result still carries provider names) to
+  reduce brand and self-preference bias; each critique now ends with a structured
+  verdict (best answer / key fix / confidence); and the synthesizer is instructed
+  to adjudicate on correctness over popularity, not favour its own (now
+  unidentifiable) draft, surface unresolved disagreement rather than blend it
+  away. The synthesis is framed so the drafts/critiques are private input
+  material and the final answer is written as if answering the user fresh — it
+  never alludes to the drafts, critiques, selection process, or internal labels
+  like `Answer A` (the internal draft heading is `## Drafts`, not
+  `## Candidate answers`, to keep that word out of the model's context).
+  Prompt instructions proved unreliable at suppressing that narration, so a final
+  **sanitizing pass** rewrites the synthesized answer to strip any leftover
+  meta-commentary about the process — one extra model call per combine; on
+  failure or empty output it returns the un-sanitized answer.
+- `combine()` accepts an optional `CombineOptions` second argument with an
+  `onEvent` callback for progress events (`CombineEvent`: phase boundaries and
+  per-participant `draft`/`critique` settle events with `ok`/`failed` status).
+  Status only — no token streaming; the result is still the resolved
+  `CombineResult`. Handler errors are swallowed so a listener can't break the run.
+  New types `CombineRequest`, `CombineResult`, `ParticipantOutcome`, and
+  `StrategyName` (in `src/combine/`) are exported from the entry point. Uses
+  only `complete()` — no streaming for combine yet.
 - Mocked unit tests for request building, SSE parsing, and error handling.
 - Opt-in live integration tests (`*.integration.test.ts`), double-gated on
   `RUN_LIVE_TESTS=1` + the provider key
-  (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`).
+  (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`). The consensus
+  combine suite (`consensus.integration`) is triple-gated, requiring all three
+  keys (it runs the full three-way draft → critique → synthesize flow).
   The `test:integration` script runs all integration suites by default and
   accepts an optional filename pattern to narrow to one provider
   (e.g. `yarn test:integration openai.integration`).
