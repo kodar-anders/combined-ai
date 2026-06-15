@@ -83,46 +83,58 @@ export class AnthropicProvider implements Provider {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    let result = await reader.read();
-    while (!result.done) {
-      buffer += decoder.decode(result.value as Uint8Array, { stream: true });
+    try {
+      let result = await reader.read();
+      while (!result.done) {
+        buffer += decoder.decode(result.value as Uint8Array, { stream: true });
 
-      for (
-        let nl = buffer.indexOf("\n");
-        nl !== -1;
-        nl = buffer.indexOf("\n")
-      ) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
+        for (
+          let nl = buffer.indexOf("\n");
+          nl !== -1;
+          nl = buffer.indexOf("\n")
+        ) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
 
-        if (!line.startsWith("data:")) {
-          continue;
-        }
-        const payload = line.slice("data:".length).trim();
-        const parsed: unknown = JSON.parse(payload);
-        if (!isRecord(parsed)) {
-          continue;
-        }
+          if (!line.startsWith("data:")) {
+            continue;
+          }
+          const payload = line.slice("data:".length).trim();
+          if (payload === "") {
+            continue;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+          if (!isRecord(parsed)) {
+            continue;
+          }
 
-        if (parsed.type === "message_stop") {
-          return;
-        }
-        if (parsed.type === "error") {
-          throw new Error(`Anthropic stream error: ${payload}`);
-        }
-        if (parsed.type === "content_block_delta") {
-          const delta = parsed.delta;
-          if (
-            isRecord(delta) &&
-            delta.type === "text_delta" &&
-            typeof delta.text === "string"
-          ) {
-            yield delta.text;
+          if (parsed.type === "message_stop") {
+            return;
+          }
+          if (parsed.type === "error") {
+            throw new Error(`Anthropic stream error: ${payload}`);
+          }
+          if (parsed.type === "content_block_delta") {
+            const delta = parsed.delta;
+            if (
+              isRecord(delta) &&
+              delta.type === "text_delta" &&
+              typeof delta.text === "string"
+            ) {
+              yield delta.text;
+            }
           }
         }
-      }
 
-      result = await reader.read();
+        result = await reader.read();
+      }
+    } finally {
+      await reader.cancel();
     }
   }
 

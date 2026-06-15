@@ -7,6 +7,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+
+- SSE streaming in all three providers no longer crashes mid-stream on a blank
+  or malformed `data:` line: empty payloads are skipped and each `JSON.parse` is
+  guarded so a bad frame is dropped rather than throwing and stranding tokens
+  already yielded.
+- SSE streaming in all three providers now releases the response body reader on
+  every exit path (normal end, thrown error, or a consumer `break`ing out of the
+  `for await`) via `try/finally { await reader.cancel(); }`, preventing a leaked
+  socket on long-running servers.
+
 ## [0.1.0] - 2026-06-15
 
 ### Added
