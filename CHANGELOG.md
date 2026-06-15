@@ -93,8 +93,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   never reads environment variables.
 - `@types/node` dependency and `"types": ["node"]` in `tsconfig.json` so Node
   globals (`fetch`, `ReadableStream`, `TextDecoder`) resolve.
-- `README.md`.
-
-### Removed
-
-- Placeholder `version` constant and its test (scaffolding).
+- `README.md`, expanded with a table of contents, an error-handling section
+  (how `complete()`/`stream()` surface API failures), status/TypeScript/Node
+  badges, and a changelog link.
+- MIT `LICENSE` and a `package.json` `description`.
