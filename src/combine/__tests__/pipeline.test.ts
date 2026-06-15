@@ -21,6 +21,12 @@ function phaseOf(request: CompletionRequest): Phase {
   return "first";
 }
 
+/** Combine always builds string content, so the fakes can read it back as text. */
+function firstText(request: CompletionRequest): string {
+  const content = request.messages[0]?.content;
+  return typeof content === "string" ? content : "";
+}
+
 /**
  * A network-free {@link Provider} that records every call and returns
  * `"<name>:<phase>"`, optionally throwing on `failOn` or returning empty text on
@@ -47,9 +53,7 @@ function fakeProvider(
         return { text: "", model: `${name}-model` };
       }
       const text =
-        phase === "sanitize"
-          ? (request.messages[0]?.content ?? "")
-          : `${name}:${phase}`;
+        phase === "sanitize" ? firstText(request) : `${name}:${phase}`;
       return usage === undefined
         ? { text, model: `${name}-model` }
         : { text, model: `${name}-model`, usage };
@@ -446,7 +450,7 @@ describe("pipeline", () => {
         const phase = phaseOf(request);
         calls.push({ provider: "openai", phase, request });
         if (phase === "refine") {
-          const body = request.messages[0]?.content ?? "";
+          const body = firstText(request);
           const marker = "## Current answer\n";
           return {
             text: body.slice(body.indexOf(marker) + marker.length),

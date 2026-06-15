@@ -11,6 +11,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 - Core, provider-agnostic contract in `src/types.ts`: `Provider`, `Message`,
   `Role`, `CompletionRequest`, `CompletionResult`.
+- Structured message content: `Message.content` is now `string | ContentPart[]`.
+  A bare `string` is shorthand for a single text part, so existing callers are
+  unchanged; pass `ContentPart[]` for structured content. The `Message` widening
+  is a one-time change; tool parts will add members later without breaking it.
+- Structured output: `CompletionRequest.responseFormat?: ResponseFormat`
+  (`{ type: "json_schema"; schema; name? }`, exported) constrains the output to a
+  raw JSON Schema — no Zod/runtime dependency. Each provider maps it to its native
+  mechanism (Anthropic `output_config.format`, OpenAI `response_format` with
+  `strict: true`, Gemini `responseSchema` with the OpenAPI-3 subset). The model
+  returns JSON in `text`, and `complete()` also surfaces the parsed value on
+  `CompletionResult.parsed` (`undefined` when no schema was requested or the
+  output wasn't valid JSON). For one schema to work across all three, set
+  `additionalProperties: false` and list every property in `required`.
+- Multimodal input: `ContentPart` is `TextPart | ImagePart | FilePart` (all
+  exported, plus `MediaSource`). Pass images (`{ type: "image", source }`) and
+  documents/PDFs (`{ type: "file", source, filename? }`) alongside text, where
+  `source` is base64 bytes (`{ kind: "base64", mediaType, data }`) or a URL
+  (`{ kind: "url", url, mediaType? }`). Each provider maps to its own wire shape
+  (Anthropic `image`/`document` blocks, OpenAI `image_url`/`file` parts, Gemini
+  `inlineData`/`fileData`). Provider support varies — OpenAI's Chat Completions
+  has no URL file source, so that combination throws a clear error.
 - `finishReason`, `rawFinishReason`, and `refusal` on `CompletionResult` plus a
   `FinishReason` union (`"stop" | "length" | "content_filter" | "other"`). Each
   provider's stop field (Anthropic `stop_reason`, OpenAI `finish_reason`, Gemini

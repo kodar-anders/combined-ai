@@ -105,6 +105,145 @@ describe("OpenAIProvider.complete", () => {
     expect(body.max_completion_tokens).toBe(100);
   });
 
+  it("maps ContentPart[] content onto OpenAI content parts", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "first" },
+          { type: "text", text: "second" },
+        ],
+      },
+    ]);
+  });
+
+  it("maps image and file parts onto OpenAI image_url/file parts", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in these?" },
+            {
+              type: "image",
+              source: { kind: "base64", mediaType: "image/png", data: "aGk=" },
+            },
+            {
+              type: "image",
+              source: { kind: "url", url: "https://example.com/y.png" },
+            },
+            {
+              type: "file",
+              source: {
+                kind: "base64",
+                mediaType: "application/pdf",
+                data: "JVBER",
+              },
+              filename: "doc.pdf",
+            },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages[0].content).toEqual([
+      { type: "text", text: "What is in these?" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } },
+      { type: "image_url", image_url: { url: "https://example.com/y.png" } },
+      {
+        type: "file",
+        file: {
+          filename: "doc.pdf",
+          file_data: "data:application/pdf;base64,JVBER",
+        },
+      },
+    ]);
+  });
+
+  it("throws on a URL file source (unsupported by Chat Completions)", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await expect(
+      provider.complete({
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "file",
+                source: { kind: "url", url: "https://example.com/y.pdf" },
+              },
+            ],
+          },
+        ],
+      }),
+    ).rejects.toThrow("does not support a URL file source");
+  });
+
+  it("sends a json_schema response_format and parses structured output", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [{ message: { content: '{"city":"Paris"}' } }],
+        }),
+    }));
+
+    const schema = {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+      additionalProperties: false,
+    };
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Where is the Eiffel Tower?" }],
+      responseFormat: { type: "json_schema", schema },
+    });
+
+    expect(result.parsed).toEqual({ city: "Paris" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    // `name` defaults to "response" when omitted; strict mode is on.
+    expect(body.response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "response", strict: true, schema },
+    });
+  });
+
   it("forwards an abort signal to fetch", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
