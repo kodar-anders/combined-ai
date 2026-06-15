@@ -201,6 +201,30 @@ describe("GeminiProvider.complete", () => {
     expect(providerError.type).toBe("INVALID_ARGUMENT");
   });
 
+  it("throws a typed ProviderError on a 200 response with an error body", async () => {
+    mockFetch(() => ({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          error: { code: 503, message: "overloaded", status: "UNAVAILABLE" },
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("api");
+    expect(providerError.provider).toBe("gemini");
+    expect(providerError.status).toBe(200);
+    expect(providerError.type).toBe("UNAVAILABLE");
+    expect(providerError.message).toContain("gemini request failed (200)");
+  });
+
   it("wraps a fetch rejection in a transport ProviderError", async () => {
     mockFetch(() => Promise.reject(new TypeError("network down")));
 
