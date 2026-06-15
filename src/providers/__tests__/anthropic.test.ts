@@ -210,6 +210,31 @@ describe("AnthropicProvider.complete", () => {
     expect(providerError.message).toContain("anthropic request failed (401)");
   });
 
+  it("throws a typed ProviderError on a 200 response with an error body", async () => {
+    mockFetch(() => ({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          type: "error",
+          error: { type: "overloaded_error", message: "overloaded" },
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("api");
+    expect(providerError.provider).toBe("anthropic");
+    expect(providerError.status).toBe(200);
+    expect(providerError.type).toBe("overloaded_error");
+    expect(providerError.message).toContain("anthropic request failed (200)");
+  });
+
   it("wraps a fetch rejection in a transport ProviderError", async () => {
     mockFetch(() => Promise.reject(new TypeError("network down")));
 

@@ -187,7 +187,9 @@ try {
 ```
 
 Streaming throws the same `ProviderError` on the first iteration if the request
-fails.
+fails. `complete()` also throws a `ProviderError` (`kind: "api"`, `status: 200`)
+if a provider or proxy returns HTTP 200 with an `{ error }` body, rather than
+yielding a silently empty result.
 
 For `combine()`, individual provider failures are tolerated rather than thrown —
 each failed participant's `error` (a `ProviderError`) is recorded in the result;

@@ -72,6 +72,26 @@ export async function apiError(
 }
 
 /**
+ * Build an `api` {@link ProviderError} from a 2xx response whose JSON body
+ * nevertheless carries an `{ error }` payload (a provider or proxy returning
+ * HTTP 200 with an error). Mirrors {@link apiError} but for an already-parsed
+ * success-status body, so the call surfaces as a typed failure instead of a
+ * silent empty result.
+ */
+export function apiErrorFromBody(
+  provider: ProviderName,
+  status: number,
+  data: unknown,
+): ProviderError {
+  const body = JSON.stringify(data);
+  const { code, type } = parseErrorFields(data);
+  return new ProviderError(
+    `${provider} request failed (${String(status)}): ${body}`,
+    { provider, kind: "api", status, code, type, body },
+  );
+}
+
+/**
  * Pull a machine `code`/`type` out of an error body across the three vendors'
  * shapes: all nest the detail under `error`; the human code is OpenAI's
  * `error.code` (a string — Gemini's `code` is the numeric HTTP status, so it's
@@ -85,6 +105,11 @@ function parseErrorBody(body: string): { code?: string; type?: string } {
   } catch {
     return {};
   }
+  return parseErrorFields(parsed);
+}
+
+/** Extract `code`/`type` from an already-parsed error body (see {@link parseErrorBody}). */
+function parseErrorFields(parsed: unknown): { code?: string; type?: string } {
   if (!isRecord(parsed)) {
     return {};
   }

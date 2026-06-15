@@ -57,7 +57,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   (network/DNS/abort) are wrapped as `kind: "transport"` instead of escaping as a
   bare `TypeError`. Consumers can branch on `err.status` / `err.kind` instead of
   regex-matching the message. A failed participant's `error` in a `combine()`
-  result is a `ProviderError` too.
+  result is a `ProviderError` too. `complete()` now also throws a `ProviderError`
+  when a provider/proxy returns HTTP 200 with an `{ error }` body (previously a
+  silent empty result).
 - Automatic retry with bounded exponential backoff on the routine retryable
   statuses (429 rate limit, 503 unavailable, 529 Anthropic overloaded), for both
   `complete()` and `stream()` across all three providers. Honors a `Retry-After`

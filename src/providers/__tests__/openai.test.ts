@@ -194,6 +194,31 @@ describe("OpenAIProvider.complete", () => {
     expect(providerError.type).toBe("invalid_request_error");
   });
 
+  it("throws a typed ProviderError on a 200 response with an error body", async () => {
+    mockFetch(() => ({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          error: { code: "rate_limit_exceeded", type: "tokens" },
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("api");
+    expect(providerError.provider).toBe("openai");
+    expect(providerError.status).toBe(200);
+    expect(providerError.code).toBe("rate_limit_exceeded");
+    expect(providerError.type).toBe("tokens");
+    expect(providerError.message).toContain("openai request failed (200)");
+  });
+
   it("wraps a fetch rejection in a transport ProviderError", async () => {
     mockFetch(() => Promise.reject(new TypeError("network down")));
 

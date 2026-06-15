@@ -3,7 +3,7 @@
  * no SDK dependency.
  */
 
-import { apiError } from "../errors";
+import { apiError, apiErrorFromBody } from "../errors";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
@@ -67,6 +67,9 @@ export class OpenAIProvider implements Provider {
     }
 
     const data: unknown = await response.json();
+    if (isRecord(data) && isRecord(data.error)) {
+      throw apiErrorFromBody("openai", response.status, data);
+    }
     const rawFinishReason = extractFinishReason(data);
     const refusal = extractRefusal(data);
     return {
