@@ -3,6 +3,7 @@
  * `fetch` — no SDK dependency.
  */
 
+import { apiError, providerFetch } from "../errors";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -41,14 +42,14 @@ export class GeminiProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
-    const response = await fetch(this.#url(model, false), {
+    const response = await providerFetch("gemini", this.#url(model, false), {
       method: "POST",
       headers: this.#headers(),
       body: JSON.stringify(this.#buildBody(request, DEFAULT_MAX_TOKENS)),
     });
 
     if (!response.ok) {
-      throw await requestError(response);
+      throw await apiError("gemini", response);
     }
 
     const data: unknown = await response.json();
@@ -62,14 +63,14 @@ export class GeminiProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
-    const response = await fetch(this.#url(model, true), {
+    const response = await providerFetch("gemini", this.#url(model, true), {
       method: "POST",
       headers: this.#headers(),
       body: JSON.stringify(this.#buildBody(request, DEFAULT_STREAM_MAX_TOKENS)),
     });
 
     if (!response.ok) {
-      throw await requestError(response);
+      throw await apiError("gemini", response);
     }
     if (!response.body) {
       throw new Error("Gemini streaming response had no body");
@@ -172,11 +173,6 @@ function toGeminiContent(message: Message): {
     role: message.role === "assistant" ? "model" : "user",
     parts: [{ text: message.content }],
   };
-}
-
-async function requestError(response: Response): Promise<Error> {
-  const detail = await response.text();
-  return new Error(`Gemini request failed (${response.status}): ${detail}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

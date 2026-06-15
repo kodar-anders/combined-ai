@@ -3,6 +3,7 @@
  * no SDK dependency.
  */
 
+import { apiError, providerFetch } from "../errors";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -41,16 +42,20 @@ export class OpenAIProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
-    const response = await fetch(`${this.#baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: this.#headers(),
-      body: JSON.stringify(
-        this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
-      ),
-    });
+    const response = await providerFetch(
+      "openai",
+      `${this.#baseUrl}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: this.#headers(),
+        body: JSON.stringify(
+          this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
+        ),
+      },
+    );
 
     if (!response.ok) {
-      throw await requestError(response);
+      throw await apiError("openai", response);
     }
 
     const data: unknown = await response.json();
@@ -64,16 +69,20 @@ export class OpenAIProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
-    const response = await fetch(`${this.#baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: this.#headers(),
-      body: JSON.stringify(
-        this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
-      ),
-    });
+    const response = await providerFetch(
+      "openai",
+      `${this.#baseUrl}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: this.#headers(),
+        body: JSON.stringify(
+          this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
+        ),
+      },
+    );
 
     if (!response.ok) {
-      throw await requestError(response);
+      throw await apiError("openai", response);
     }
     if (!response.body) {
       throw new Error("OpenAI streaming response had no body");
@@ -174,11 +183,6 @@ function toOpenAIMessages(
     messages.unshift({ role: "system", content: request.system });
   }
   return messages;
-}
-
-async function requestError(response: Response): Promise<Error> {
-  const detail = await response.text();
-  return new Error(`OpenAI request failed (${response.status}): ${detail}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
+import { ProviderError } from "../../errors";
 import { OpenAIProvider } from "../openai";
 
 const originalFetch = globalThis.fetch;
@@ -104,17 +105,41 @@ describe("OpenAIProvider.complete", () => {
     expect(body.max_completion_tokens).toBe(100);
   });
 
-  it("throws on a non-2xx response", async () => {
+  it("throws a typed ProviderError parsing the OpenAI error body", async () => {
     mockFetch(() => ({
       ok: false,
-      status: 400,
-      text: () => Promise.resolve("bad request"),
+      status: 401,
+      text: () =>
+        Promise.resolve(
+          '{"error":{"message":"bad key","type":"invalid_request_error","code":"invalid_api_key"}}',
+        ),
     }));
 
     const provider = new OpenAIProvider({ apiKey: "sk-test" });
-    await expect(
-      provider.complete({ messages: [{ role: "user", content: "Hi" }] }),
-    ).rejects.toThrow("OpenAI request failed (400): bad request");
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("api");
+    expect(providerError.provider).toBe("openai");
+    expect(providerError.status).toBe(401);
+    expect(providerError.code).toBe("invalid_api_key");
+    expect(providerError.type).toBe("invalid_request_error");
+  });
+
+  it("wraps a fetch rejection in a transport ProviderError", async () => {
+    mockFetch(() => Promise.reject(new TypeError("network down")));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).kind).toBe("transport");
+    expect((error as ProviderError).provider).toBe("openai");
   });
 });
 
@@ -233,6 +258,6 @@ describe("OpenAIProvider.stream", () => {
       }
     };
 
-    await expect(run()).rejects.toThrow("OpenAI request failed (429)");
+    await expect(run()).rejects.toThrow("openai request failed (429)");
   });
 });

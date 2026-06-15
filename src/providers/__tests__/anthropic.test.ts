@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
+import { ProviderError } from "../../errors";
 import { AnthropicProvider } from "../anthropic";
 
 const originalFetch = globalThis.fetch;
@@ -87,17 +88,44 @@ describe("AnthropicProvider.complete", () => {
     expect(body.max_tokens).toBe(100);
   });
 
-  it("throws on a non-2xx response", async () => {
+  it("throws a typed ProviderError on a non-2xx response", async () => {
     mockFetch(() => ({
       ok: false,
-      status: 400,
-      text: () => Promise.resolve("bad request"),
+      status: 401,
+      text: () =>
+        Promise.resolve(
+          '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+        ),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
-    await expect(
-      provider.complete({ messages: [{ role: "user", content: "Hi" }] }),
-    ).rejects.toThrow("Anthropic request failed (400): bad request");
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("api");
+    expect(providerError.provider).toBe("anthropic");
+    expect(providerError.status).toBe(401);
+    expect(providerError.type).toBe("authentication_error");
+    expect(providerError.message).toContain("anthropic request failed (401)");
+  });
+
+  it("wraps a fetch rejection in a transport ProviderError", async () => {
+    mockFetch(() => Promise.reject(new TypeError("network down")));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("transport");
+    expect(providerError.provider).toBe("anthropic");
+    expect(providerError.status).toBeUndefined();
+    expect(providerError.cause).toBeInstanceOf(TypeError);
   });
 });
 
@@ -219,6 +247,6 @@ describe("AnthropicProvider.stream", () => {
       }
     };
 
-    await expect(run()).rejects.toThrow("Anthropic request failed (529)");
+    await expect(run()).rejects.toThrow("anthropic request failed (529)");
   });
 });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
+import { ProviderError } from "../../errors";
 import { GeminiProvider } from "../gemini";
 
 const originalFetch = globalThis.fetch;
@@ -116,17 +117,42 @@ describe("GeminiProvider.complete", () => {
     expect(body.generationConfig.maxOutputTokens).toBe(100);
   });
 
-  it("throws on a non-2xx response", async () => {
+  it("throws a typed ProviderError parsing the Gemini error body", async () => {
     mockFetch(() => ({
       ok: false,
       status: 400,
-      text: () => Promise.resolve("bad request"),
+      text: () =>
+        Promise.resolve(
+          '{"error":{"code":400,"message":"bad request","status":"INVALID_ARGUMENT"}}',
+        ),
     }));
 
     const provider = new GeminiProvider({ apiKey: "key-test" });
-    await expect(
-      provider.complete({ messages: [{ role: "user", content: "Hi" }] }),
-    ).rejects.toThrow("Gemini request failed (400): bad request");
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    const providerError = error as ProviderError;
+    expect(providerError.kind).toBe("api");
+    expect(providerError.provider).toBe("gemini");
+    expect(providerError.status).toBe(400);
+    // Gemini's numeric `code` is skipped; its `status` becomes the error `type`.
+    expect(providerError.code).toBeUndefined();
+    expect(providerError.type).toBe("INVALID_ARGUMENT");
+  });
+
+  it("wraps a fetch rejection in a transport ProviderError", async () => {
+    mockFetch(() => Promise.reject(new TypeError("network down")));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }] })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).kind).toBe("transport");
+    expect((error as ProviderError).provider).toBe("gemini");
   });
 });
 
@@ -245,6 +271,6 @@ describe("GeminiProvider.stream", () => {
       }
     };
 
-    await expect(run()).rejects.toThrow("Gemini request failed (429)");
+    await expect(run()).rejects.toThrow("gemini request failed (429)");
   });
 });
