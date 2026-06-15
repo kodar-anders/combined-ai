@@ -40,6 +40,10 @@ today, and is being built toward **combining multiple providers on one prompt**.
 - One provider-agnostic contract (`Provider`) for every backend.
 - `complete()` — run a prompt, get the full text back.
 - `stream()` — run a prompt, receive text deltas as they arrive.
+- Multimodal input — message content can carry images and documents (PDFs)
+  alongside text, as base64 bytes or a URL, mapped to each provider's wire format.
+- Structured output — constrain a response to a JSON Schema (`responseFormat`);
+  the parsed object comes back on `result.parsed`. Plain JSON Schema, no Zod.
 - **Anthropic (Claude)**, **OpenAI**, and **Google Gemini** providers, talking
   to their HTTP APIs directly over the global `fetch` — no SDK dependency.
 - `ProviderRegistry` — a single point of access: configure your providers, then
@@ -419,13 +423,41 @@ is no terminal event (the result is the return value), and errors thrown from
 
 Both `complete()` and `stream()` take a `CompletionRequest`:
 
-| Field       | Type          | Notes                                                                          |
-| ----------- | ------------- | ------------------------------------------------------------------------------ |
-| `messages`  | `Message[]`   | Required. `{ role: "user" \| "assistant"; content: string }`                   |
-| `system`    | `string`      | Optional system prompt.                                                        |
-| `model`     | `string`      | Optional per-request model override.                                           |
-| `maxTokens` | `number`      | Optional output cap (defaults: 16000 complete / 64000 stream).                 |
-| `signal`    | `AbortSignal` | Optional. Aborts the request (and an in-flight `stream()` read) when it fires. |
+| Field            | Type             | Notes                                                                                          |
+| ---------------- | ---------------- | ---------------------------------------------------------------------------------------------- |
+| `messages`       | `Message[]`      | Required. `{ role: "user" \| "assistant"; content: string \| ContentPart[] }`                  |
+| `system`         | `string`         | Optional system prompt.                                                                        |
+| `model`          | `string`         | Optional per-request model override.                                                           |
+| `maxTokens`      | `number`         | Optional output cap (defaults: 16000 complete / 64000 stream).                                 |
+| `responseFormat` | `ResponseFormat` | Optional. Constrain the output to a JSON Schema — see [Structured output](#structured-output). |
+| `signal`         | `AbortSignal`    | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                 |
+
+> **Message content:** `content` accepts a plain `string` (shorthand for a single
+> text part) or a `ContentPart[]` for multimodal input. A `ContentPart` is a
+> `TextPart` (`{ type: "text"; text }`), an `ImagePart` (`{ type: "image"; source }`),
+> or a `FilePart` (`{ type: "file"; source; filename? }`) — a document such as a
+> PDF. The `source` is either base64 bytes (`{ kind: "base64"; mediaType; data }`)
+> or a URL (`{ kind: "url"; url; mediaType? }`). Provider support varies: OpenAI's
+> Chat Completions has no URL file source (that combination throws), and Gemini
+> resolves a URL source only from a Files API / `gs://` URI, not an arbitrary
+> public web URL — use a base64 source for Gemini portability.
+>
+> ```ts
+> const result = await registry.select("anthropic").complete({
+>   messages: [
+>     {
+>       role: "user",
+>       content: [
+>         { type: "text", text: "What's in this image?" },
+>         {
+>           type: "image",
+>           source: { kind: "base64", mediaType: "image/png", data: pngBase64 },
+>         },
+>       ],
+>     },
+>   ],
+> });
+> ```
 
 > **Timeouts & cancellation:** pass a `signal` to bound or cancel a call. For a
 > timeout, use `AbortSignal.timeout(ms)`; to cancel manually, use an
@@ -461,14 +493,15 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 
 `complete()` resolves to a `CompletionResult`:
 
-| Field             | Type           | Notes                                                                                      |
-| ----------------- | -------------- | ------------------------------------------------------------------------------------------ |
-| `text`            | `string`       | The full answer.                                                                           |
-| `model`           | `string`       | The model that actually produced the response.                                             |
-| `finishReason`    | `FinishReason` | Normalized stop reason, or `undefined` if none was reported (see below).                   |
-| `rawFinishReason` | `string`       | The provider's exact stop-reason string (e.g. `"max_tokens"`, `"length"`, `"MAX_TOKENS"`). |
-| `refusal`         | `string`       | The refusal message when the model declined (currently OpenAI's `message.refusal`).        |
-| `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`), or `undefined` if none reported. |
+| Field             | Type           | Notes                                                                                                       |
+| ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `text`            | `string`       | The full answer.                                                                                            |
+| `model`           | `string`       | The model that actually produced the response.                                                              |
+| `finishReason`    | `FinishReason` | Normalized stop reason, or `undefined` if none was reported (see below).                                    |
+| `rawFinishReason` | `string`       | The provider's exact stop-reason string (e.g. `"max_tokens"`, `"length"`, `"MAX_TOKENS"`).                  |
+| `refusal`         | `string`       | The refusal message when the model declined (currently OpenAI's `message.refusal`).                         |
+| `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`), or `undefined` if none reported.                  |
+| `parsed`          | `unknown`      | The parsed structured output when `responseFormat` was given — see [Structured output](#structured-output). |
 
 `FinishReason` is a provider-agnostic union mapped from each provider's field
 (Anthropic `stop_reason`, OpenAI `finish_reason`, Gemini `finishReason`):
@@ -493,6 +526,41 @@ if (finishReason === "length") {
 }
 ```
 
+### Structured output
+
+Pass `responseFormat` with a **plain JSON Schema** (no Zod, no runtime
+dependency) to constrain the output. The model returns JSON in `text`, and
+`complete()` also gives you the parsed value on `result.parsed`:
+
+```ts
+const result = await registry.select("openai").complete({
+  messages: [{ role: "user", content: "Where is the Eiffel Tower?" }],
+  responseFormat: {
+    type: "json_schema",
+    schema: {
+      type: "object",
+      properties: { city: { type: "string" }, country: { type: "string" } },
+      required: ["city", "country"],
+      additionalProperties: false,
+    },
+  },
+});
+
+const place = result.parsed as { city: string; country: string };
+// result.parsed is `undefined` if the output wasn't valid JSON (e.g. truncated);
+// the raw JSON is always in result.text.
+```
+
+Each provider maps the schema to its native mechanism (Anthropic
+`output_config.format`, OpenAI `response_format` with `strict: true`, Gemini
+`responseSchema`). For one schema to work across all three, keep it simple: every
+object sets `additionalProperties: false`, and every property is `required` with a
+single non-null `type`. Avoid optional/nullable fields (OpenAI strict requires all
+properties in `required`; Gemini wants `nullable: true` rather than a
+`["string","null"]` union, so null-unions aren't portable), recursive schemas,
+`$ref`, and numeric/length constraints. `responseFormat` also applies to
+`stream()` (the streamed `text` is JSON), but only `complete()` surfaces `parsed`.
+
 ## Public API
 
 Exported from the package entry point:
@@ -500,8 +568,9 @@ Exported from the package entry point:
 - `ProviderRegistry` — the single entry point (`select()` and `combine()`).
 - Config types: `ProviderRegistryConfig`, `ProviderName`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
-- Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
-  `CompletionResult`, `FinishReason`, `Usage`.
+- Contract types: `Provider`, `Message`, `Role`, `ContentPart`, `TextPart`,
+  `ImagePart`, `FilePart`, `MediaSource`, `CompletionRequest`, `CompletionResult`,
+  `ResponseFormat`, `FinishReason`, `Usage`.
 - `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
   type — see [Error handling](#error-handling).
 - `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).

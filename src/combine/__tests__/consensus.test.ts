@@ -22,6 +22,12 @@ function phaseOf(request: CompletionRequest): Phase {
   return "draft";
 }
 
+/** Combine always builds string content, so the fakes can read it back as text. */
+function firstText(request: CompletionRequest): string {
+  const content = request.messages[0]?.content;
+  return typeof content === "string" ? content : "";
+}
+
 /**
  * A network-free {@link Provider} that records every call and returns
  * `"<name>:<phase>"`, optionally throwing on `failOn` or returning empty text on
@@ -49,7 +55,7 @@ function fakeProvider(
         emptyOn === phase
           ? ""
           : phase === "sanitize"
-            ? (request.messages[0]?.content ?? "")
+            ? firstText(request)
             : `${name}:${phase}`;
       return usage === undefined
         ? { text, model: `${name}-model` }

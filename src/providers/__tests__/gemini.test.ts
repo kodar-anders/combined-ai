@@ -117,6 +117,128 @@ describe("GeminiProvider.complete", () => {
     expect(body.generationConfig.maxOutputTokens).toBe(100);
   });
 
+  it("maps ContentPart[] content onto Gemini text parts", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "first" }, { text: "second" }] },
+    ]);
+  });
+
+  it("maps image and file parts onto Gemini inlineData/fileData", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in these?" },
+            {
+              type: "image",
+              source: { kind: "base64", mediaType: "image/png", data: "aGk=" },
+            },
+            {
+              type: "image",
+              source: {
+                kind: "url",
+                url: "https://example.com/y.png",
+                mediaType: "image/png",
+              },
+            },
+            {
+              type: "image",
+              source: { kind: "url", url: "https://example.com/no-mime" },
+            },
+            {
+              type: "file",
+              source: {
+                kind: "base64",
+                mediaType: "application/pdf",
+                data: "JVBER",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.contents[0].parts).toEqual([
+      { text: "What is in these?" },
+      { inlineData: { mimeType: "image/png", data: "aGk=" } },
+      {
+        fileData: {
+          mimeType: "image/png",
+          fileUri: "https://example.com/y.png",
+        },
+      },
+      { fileData: { fileUri: "https://example.com/no-mime" } },
+      { inlineData: { mimeType: "application/pdf", data: "JVBER" } },
+    ]);
+  });
+
+  it("sends responseSchema with UPPERCASE types and parses structured output", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [{ content: { parts: [{ text: '{"city":"Paris"}' }] } }],
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Where is the Eiffel Tower?" }],
+      responseFormat: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+          additionalProperties: false,
+        },
+      },
+    });
+
+    expect(result.parsed).toEqual({ city: "Paris" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.generationConfig.responseMimeType).toBe("application/json");
+    expect(body.generationConfig.responseSchema).toEqual({
+      type: "OBJECT",
+      properties: { city: { type: "STRING" } },
+      required: ["city"],
+      additionalProperties: false,
+    });
+  });
+
   it("forwards an abort signal to fetch", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,

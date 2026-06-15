@@ -9,10 +9,16 @@
 export type {
   CompletionRequest,
   CompletionResult,
+  ContentPart,
+  FilePart,
   FinishReason,
+  ImagePart,
+  MediaSource,
   Message,
   Provider,
+  ResponseFormat,
   Role,
+  TextPart,
   Usage,
 } from "./types";
 

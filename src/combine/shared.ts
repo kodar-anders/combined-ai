@@ -14,8 +14,10 @@ import { type ProviderName } from "../registry";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type ContentPart,
   type Message,
   type Provider,
+  type TextPart,
   type Usage,
 } from "../types";
 
@@ -170,12 +172,29 @@ export function aggregateUsage(
     : { total, byParticipant };
 }
 
+/**
+ * Extract the plain text from a message's content: a `string` is returned as-is;
+ * a `ContentPart[]` has its text parts concatenated. (Combine renders prompts as
+ * text, so non-text parts don't propagate through the phases — a known limit.)
+ */
+function textOf(content: string | ContentPart[]): string {
+  return typeof content === "string"
+    ? content
+    : content
+        .filter((part): part is TextPart => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+}
+
 /** Render the original messages as the "question" block for later phases. */
 export function renderConversation(messages: Message[]): string {
   if (messages.length === 1) {
-    return messages[0]?.content ?? "";
+    return textOf(messages[0]?.content ?? "");
   }
   return messages
-    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .map(
+      (m) =>
+        `${m.role === "user" ? "User" : "Assistant"}: ${textOf(m.content)}`,
+    )
     .join("\n\n");
 }

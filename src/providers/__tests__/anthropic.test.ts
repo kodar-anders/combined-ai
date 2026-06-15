@@ -88,6 +88,148 @@ describe("AnthropicProvider.complete", () => {
     expect(body.max_tokens).toBe(100);
   });
 
+  it("maps ContentPart[] content onto Anthropic content blocks", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "first" },
+          { type: "text", text: "second" },
+        ],
+      },
+    ]);
+  });
+
+  it("maps image and file parts onto Anthropic image/document blocks", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in these?" },
+            {
+              type: "image",
+              source: { kind: "base64", mediaType: "image/png", data: "aGk=" },
+            },
+            {
+              type: "image",
+              source: { kind: "url", url: "https://example.com/y.png" },
+            },
+            {
+              type: "file",
+              source: {
+                kind: "base64",
+                mediaType: "application/pdf",
+                data: "JVBER",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages[0].content).toEqual([
+      { type: "text", text: "What is in these?" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "aGk=" },
+      },
+      {
+        type: "image",
+        source: { type: "url", url: "https://example.com/y.png" },
+      },
+      {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: "JVBER",
+        },
+      },
+    ]);
+  });
+
+  it("sends output_config and parses structured output", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          content: [{ type: "text", text: '{"city":"Paris"}' }],
+        }),
+    }));
+
+    const schema = {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+      additionalProperties: false,
+    };
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Where is the Eiffel Tower?" }],
+      responseFormat: { type: "json_schema", schema },
+    });
+
+    expect(result.parsed).toEqual({ city: "Paris" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.output_config).toEqual({
+      format: { type: "json_schema", schema },
+    });
+  });
+
+  it("leaves parsed undefined when structured output is not valid JSON", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          content: [{ type: "text", text: "not json" }],
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      responseFormat: {
+        type: "json_schema",
+        schema: { type: "object", additionalProperties: false },
+      },
+    });
+
+    expect(result.text).toBe("not json");
+    expect(result.parsed).toBeUndefined();
+  });
+
   it("forwards an abort signal to fetch", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,

@@ -4,12 +4,17 @@
  */
 
 import { apiError, apiErrorFromBody } from "../errors";
+import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type ContentPart,
   type FinishReason,
+  type MediaSource,
+  type Message,
   type Provider,
+  type Role,
   type Usage,
 } from "../types";
 
@@ -72,13 +77,15 @@ export class AnthropicProvider implements Provider {
       throw apiErrorFromBody("anthropic", response.status, data);
     }
     const rawFinishReason = extractFinishReason(data);
+    const text = extractText(data);
     return {
-      text: extractText(data),
+      text,
       model: extractModel(data, model),
       finishReason: normalizeFinishReason(rawFinishReason),
       rawFinishReason,
       refusal: extractRefusal(data),
       usage: extractUsage(data),
+      parsed: parseStructured(request, text),
     };
   }
 
@@ -183,16 +190,68 @@ export class AnthropicProvider implements Provider {
     const body: Record<string, unknown> = {
       model,
       max_tokens: request.maxTokens ?? defaultMaxTokens,
-      messages: request.messages,
+      messages: request.messages.map((message) => toAnthropicMessage(message)),
     };
     if (request.system !== undefined) {
       body.system = request.system;
+    }
+    if (request.responseFormat !== undefined) {
+      // Anthropic's native structured output: a top-level output_config.format
+      // (no name/strict wrapper). The schema is passed through as-is.
+      body.output_config = {
+        format: { type: "json_schema", schema: request.responseFormat.schema },
+      };
     }
     if (stream) {
       body.stream = true;
     }
     return body;
   }
+}
+
+type AnthropicSource =
+  | { type: "base64"; media_type: string; data: string }
+  | { type: "url"; url: string };
+
+type AnthropicBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: AnthropicSource }
+  | { type: "document"; source: AnthropicSource };
+
+/**
+ * Map a message onto Anthropic's wire shape. A bare-`string` content is sent
+ * as-is (Anthropic accepts a string or an array of content blocks); structured
+ * content is mapped block-by-block. An image is an `image` block, a file a
+ * `document` block (PDF/text).
+ */
+function toAnthropicMessage(message: Message): {
+  role: Role;
+  content: string | AnthropicBlock[];
+} {
+  if (typeof message.content === "string") {
+    return { role: message.role, content: message.content };
+  }
+  return {
+    role: message.role,
+    content: message.content.map((part) => toAnthropicBlock(part)),
+  };
+}
+
+function toAnthropicBlock(part: ContentPart): AnthropicBlock {
+  switch (part.type) {
+    case "text":
+      return { type: "text", text: part.text };
+    case "image":
+      return { type: "image", source: toAnthropicSource(part.source) };
+    case "file":
+      return { type: "document", source: toAnthropicSource(part.source) };
+  }
+}
+
+function toAnthropicSource(source: MediaSource): AnthropicSource {
+  return source.kind === "base64"
+    ? { type: "base64", media_type: source.mediaType, data: source.data }
+    : { type: "url", url: source.url };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

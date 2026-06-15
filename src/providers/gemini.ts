@@ -4,11 +4,14 @@
  */
 
 import { apiError, apiErrorFromBody } from "../errors";
+import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type ContentPart,
   type FinishReason,
+  type MediaSource,
   type Message,
   type Provider,
   type Usage,
@@ -70,12 +73,14 @@ export class GeminiProvider implements Provider {
       throw apiErrorFromBody("gemini", response.status, data);
     }
     const rawFinishReason = extractFinishReason(data);
+    const text = extractText(data);
     return {
-      text: extractText(data),
+      text,
       model: extractModel(data, model),
       finishReason: normalizeFinishReason(rawFinishReason),
       rawFinishReason,
       usage: extractUsage(data),
+      parsed: parseStructured(request, text),
     };
   }
 
@@ -176,11 +181,20 @@ export class GeminiProvider implements Provider {
     request: CompletionRequest,
     defaultMaxTokens: number,
   ): Record<string, unknown> {
+    const generationConfig: Record<string, unknown> = {
+      maxOutputTokens: request.maxTokens ?? defaultMaxTokens,
+    };
+    if (request.responseFormat !== undefined) {
+      // Gemini's native structured output lives on generationConfig: a JSON MIME
+      // type plus an OpenAPI-3-subset schema (UPPERCASE types — see toGeminiSchema).
+      generationConfig.responseMimeType = "application/json";
+      generationConfig.responseSchema = toGeminiSchema(
+        request.responseFormat.schema,
+      );
+    }
     const body: Record<string, unknown> = {
       contents: request.messages.map((message) => toGeminiContent(message)),
-      generationConfig: {
-        maxOutputTokens: request.maxTokens ?? defaultMaxTokens,
-      },
+      generationConfig,
     };
     if (request.system !== undefined) {
       body.systemInstruction = { parts: [{ text: request.system }] };
@@ -190,16 +204,96 @@ export class GeminiProvider implements Provider {
 }
 
 /**
- * Gemini names the assistant role `model` and carries text inside a `parts`
- * array rather than a flat `content` string.
+ * Convert a JSON Schema to Gemini's OpenAPI-3 subset. The load-bearing
+ * difference is that `type` values are UPPERCASE (`"string"` → `"STRING"`); we
+ * recurse through `properties`/`items`/`anyOf`/`allOf`/`oneOf` and uppercase
+ * each scalar `type`. Other keywords pass through (Gemini silently ignores ones
+ * it doesn't support); advanced features (null-union types, `$ref`, numeric/
+ * length constraints) aren't translated — keep schemas within the documented
+ * cross-provider subset.
+ */
+function toGeminiSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((entry) => toGeminiSchema(entry));
+  }
+  if (!isRecord(schema)) {
+    return schema;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "type" && typeof value === "string") {
+      out[key] = value.toUpperCase();
+    } else if (key === "properties" && isRecord(value)) {
+      out[key] = Object.fromEntries(
+        Object.entries(value).map(([name, propSchema]) => [
+          name,
+          toGeminiSchema(propSchema),
+        ]),
+      );
+    } else if (key === "items") {
+      out[key] = toGeminiSchema(value);
+    } else if (
+      ["anyOf", "allOf", "oneOf"].includes(key) &&
+      Array.isArray(value)
+    ) {
+      out[key] = value.map((entry) => toGeminiSchema(entry));
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+type GeminiPart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
+  | { fileData: { mimeType?: string; fileUri: string } };
+
+/**
+ * Gemini names the assistant role `model` and carries content inside a `parts`
+ * array. A bare-`string` content becomes a single text part; structured content
+ * is mapped part-by-part. Images and files map alike: inline base64 bytes become
+ * an `inlineData` part, a URL becomes a `fileData` reference (see {@link toGeminiMedia}).
  */
 function toGeminiContent(message: Message): {
   role: string;
-  parts: Array<{ text: string }>;
+  parts: GeminiPart[];
 } {
   return {
     role: message.role === "assistant" ? "model" : "user",
-    parts: [{ text: message.content }],
+    parts:
+      typeof message.content === "string"
+        ? [{ text: message.content }]
+        : message.content.map((part) => toGeminiPart(part)),
+  };
+}
+
+function toGeminiPart(part: ContentPart): GeminiPart {
+  switch (part.type) {
+    case "text":
+      return { text: part.text };
+    case "image":
+    case "file":
+      return toGeminiMedia(part.source);
+  }
+}
+
+/**
+ * Map a media source to a Gemini part. Base64 bytes become inline `inlineData`.
+ * A URL becomes a `fileData` reference — but Gemini's `fileData.fileUri` only
+ * accepts a Files API URI or a `gs://` Cloud Storage URI, **not** an arbitrary
+ * public web URL (unlike Anthropic/OpenAI image URLs). Passing a plain `https://`
+ * URL will be rejected by Gemini; use a base64 source or a Files API URI instead.
+ */
+function toGeminiMedia(source: MediaSource): GeminiPart {
+  if (source.kind === "base64") {
+    return { inlineData: { mimeType: source.mediaType, data: source.data } };
+  }
+  return {
+    fileData:
+      source.mediaType === undefined
+        ? { fileUri: source.url }
+        : { mimeType: source.mediaType, fileUri: source.url },
   };
 }
 

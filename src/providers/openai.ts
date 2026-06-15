@@ -4,11 +4,15 @@
  */
 
 import { apiError, apiErrorFromBody } from "../errors";
+import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type ContentPart,
+  type FilePart,
   type FinishReason,
+  type MediaSource,
   type Message,
   type Provider,
   type Usage,
@@ -73,8 +77,9 @@ export class OpenAIProvider implements Provider {
     }
     const rawFinishReason = extractFinishReason(data);
     const refusal = extractRefusal(data);
+    const text = extractText(data);
     return {
-      text: extractText(data),
+      text,
       model: extractModel(data, model),
       // A refusal is a content-filter outcome even though OpenAI still reports
       // finish_reason: "stop", so surface it as such regardless of the raw value.
@@ -85,6 +90,7 @@ export class OpenAIProvider implements Provider {
       rawFinishReason,
       refusal,
       usage: extractUsage(data),
+      parsed: parseStructured(request, text),
     };
   }
 
@@ -185,6 +191,19 @@ export class OpenAIProvider implements Provider {
       max_completion_tokens: request.maxTokens ?? defaultMaxTokens,
       messages: toOpenAIMessages(request),
     };
+    if (request.responseFormat !== undefined) {
+      // OpenAI Structured Outputs: response_format.json_schema with strict:true
+      // (requires additionalProperties:false + every property in `required`).
+      // `name` is required and must match ^[A-Za-z0-9_-]+$.
+      body.response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: request.responseFormat.name ?? "response",
+          strict: true,
+          schema: request.responseFormat.schema,
+        },
+      };
+    }
     if (stream) {
       body.stream = true;
     }
@@ -192,22 +211,72 @@ export class OpenAIProvider implements Provider {
   }
 }
 
+type OpenAIPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "file"; file: { filename?: string; file_data: string } };
+
 /**
  * OpenAI carries the system prompt as a leading `system` message rather than a
- * top-level field, so fold {@link CompletionRequest.system} into the array.
+ * top-level field, so fold {@link CompletionRequest.system} into the array. A
+ * bare-`string` content is sent as-is (OpenAI accepts a string or an array of
+ * parts); structured content is mapped part-by-part.
  */
 function toOpenAIMessages(
   request: CompletionRequest,
-): Array<{ role: string; content: string }> {
-  const messages: Array<{ role: string; content: string }> =
+): Array<{ role: string; content: string | OpenAIPart[] }> {
+  const messages: Array<{ role: string; content: string | OpenAIPart[] }> =
     request.messages.map((message: Message) => ({
       role: message.role,
-      content: message.content,
+      content:
+        typeof message.content === "string"
+          ? message.content
+          : message.content.map((part) => toOpenAIPart(part)),
     }));
   if (request.system !== undefined) {
     messages.unshift({ role: "system", content: request.system });
   }
   return messages;
+}
+
+function toOpenAIPart(part: ContentPart): OpenAIPart {
+  switch (part.type) {
+    case "text":
+      return { type: "text", text: part.text };
+    case "image":
+      return {
+        type: "image_url",
+        image_url: { url: toOpenAIUrl(part.source) },
+      };
+    case "file":
+      return { type: "file", file: toOpenAIFile(part) };
+  }
+}
+
+/** An image source becomes either an https URL or a base64 `data:` URI. */
+function toOpenAIUrl(source: MediaSource): string {
+  return source.kind === "base64"
+    ? `data:${source.mediaType};base64,${source.data}`
+    : source.url;
+}
+
+/**
+ * Chat Completions takes a file only as inline base64 (`file_data`, a `data:`
+ * URI) — there is no URL file source — so a `url` file source is unsupported.
+ */
+function toOpenAIFile(part: FilePart): {
+  filename?: string;
+  file_data: string;
+} {
+  if (part.source.kind !== "base64") {
+    throw new Error(
+      "OpenAI (Chat Completions) does not support a URL file source; use a base64 source.",
+    );
+  }
+  const file_data = `data:${part.source.mediaType};base64,${part.source.data}`;
+  return part.filename === undefined
+    ? { file_data }
+    : { filename: part.filename, file_data };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
