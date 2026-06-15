@@ -135,6 +135,47 @@ describe("GeminiProvider.complete", () => {
     expect(init.signal).toBe(controller.signal);
   });
 
+  it("maps MAX_TOKENS onto finishReason length", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [
+            { finishReason: "MAX_TOKENS", content: { parts: [{ text: "" }] } },
+          ],
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.text).toBe("");
+    expect(result.finishReason).toBe("length");
+    expect(result.rawFinishReason).toBe("MAX_TOKENS");
+  });
+
+  it("falls back to promptFeedback.blockReason when the prompt is blocked", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          promptFeedback: { blockReason: "SAFETY" },
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.finishReason).toBe("content_filter");
+    expect(result.rawFinishReason).toBe("SAFETY");
+  });
+
   it("throws a typed ProviderError parsing the Gemini error body", async () => {
     mockFetch(() => ({
       ok: false,

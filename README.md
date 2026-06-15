@@ -46,6 +46,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
   select one by name.
 - Automatic retry with exponential backoff on 429/503/529 (honoring
   `Retry-After`), configurable per provider.
+- `finishReason` on every `complete()` result — tells truncation/refusal apart
+  from a genuinely empty answer instead of returning a bare `text: ""`.
 - `registry.combine()` — make several providers **cooperate** on one prompt
   using a strategy: **consensus** (draft → critique → synthesize) or **pipeline**
   (a conveyor belt of providers refining one answer in sequence).
@@ -442,6 +444,41 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 > that `gemini-2.5-pro` cannot fully disable thinking, so this behavior can't
 > simply be turned off.
 
+### Result fields
+
+`complete()` resolves to a `CompletionResult`:
+
+| Field             | Type           | Notes                                                                                      |
+| ----------------- | -------------- | ------------------------------------------------------------------------------------------ |
+| `text`            | `string`       | The full answer.                                                                           |
+| `model`           | `string`       | The model that actually produced the response.                                             |
+| `finishReason`    | `FinishReason` | Normalized stop reason, or `undefined` if none was reported (see below).                   |
+| `rawFinishReason` | `string`       | The provider's exact stop-reason string (e.g. `"max_tokens"`, `"length"`, `"MAX_TOKENS"`). |
+| `refusal`         | `string`       | The refusal message when the model declined (currently OpenAI's `message.refusal`).        |
+
+`FinishReason` is a provider-agnostic union mapped from each provider's field
+(Anthropic `stop_reason`, OpenAI `finish_reason`, Gemini `finishReason`):
+
+- `"stop"` — the model finished on its own.
+- `"length"` — output was truncated at the token cap. Pair with the Gemini note
+  above: a `length` reason with empty `text` usually means the cap was spent on
+  thinking tokens.
+- `"content_filter"` — the model refused or output was blocked by a safety
+  filter. When `refusal` is set, `finishReason` is always this.
+- `"other"` — any other or unrecognized reason.
+
+This lets you tell a truncated/refused answer apart from a genuinely empty one
+instead of just seeing `text: ""`:
+
+```ts
+const { text, finishReason, refusal } = await provider.complete({ messages });
+if (finishReason === "length") {
+  // raise maxTokens and retry
+} else if (refusal !== undefined) {
+  console.warn(`Model declined: ${refusal}`);
+}
+```
+
 ## Public API
 
 Exported from the package entry point:
@@ -450,7 +487,7 @@ Exported from the package entry point:
 - Config types: `ProviderRegistryConfig`, `ProviderName`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
-  `CompletionResult`.
+  `CompletionResult`, `FinishReason`.
 - `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
   type — see [Error handling](#error-handling).
 - `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).
