@@ -3,7 +3,8 @@
  * no SDK dependency.
  */
 
-import { apiError, providerFetch } from "../errors";
+import { apiError } from "../errors";
+import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -17,6 +18,8 @@ export type OpenAIProviderOptions = {
   model?: string;
   /** Defaults to `https://api.openai.com`. */
   baseUrl?: string;
+  /** Bounded retry/backoff on 429/503/529. Defaults applied when omitted. */
+  retry?: RetryOptions;
 };
 
 const DEFAULT_MODEL = "gpt-4.1";
@@ -33,16 +36,18 @@ export class OpenAIProvider implements Provider {
   readonly #apiKey: string;
   readonly #model: string;
   readonly #baseUrl: string;
+  readonly #retry?: RetryOptions;
 
   constructor(options: OpenAIProviderOptions) {
     this.#apiKey = options.apiKey;
     this.#model = options.model ?? DEFAULT_MODEL;
     this.#baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    this.#retry = options.retry;
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
-    const response = await providerFetch(
+    const response = await requestWithRetry(
       "openai",
       `${this.#baseUrl}/v1/chat/completions`,
       {
@@ -53,6 +58,7 @@ export class OpenAIProvider implements Provider {
         ),
         signal: request.signal,
       },
+      this.#retry,
     );
 
     if (!response.ok) {
@@ -70,7 +76,7 @@ export class OpenAIProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
-    const response = await providerFetch(
+    const response = await requestWithRetry(
       "openai",
       `${this.#baseUrl}/v1/chat/completions`,
       {
@@ -81,6 +87,7 @@ export class OpenAIProvider implements Provider {
         ),
         signal: request.signal,
       },
+      this.#retry,
     );
 
     if (!response.ok) {

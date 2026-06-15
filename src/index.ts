@@ -15,6 +15,7 @@ export type {
 } from "./types";
 
 export { ProviderError, type ProviderErrorKind } from "./errors";
+export { type RetryOptions } from "./transport";
 
 export { type AnthropicProviderOptions } from "./providers/anthropic";
 export { type OpenAIProviderOptions } from "./providers/openai";

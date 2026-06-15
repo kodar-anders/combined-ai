@@ -56,28 +56,6 @@ export class ProviderError extends Error {
 }
 
 /**
- * `fetch` over the global, translating a rejected request (network/DNS failure,
- * aborted signal) into a `transport` {@link ProviderError} so the caller always
- * gets provider context instead of a bare `TypeError`.
- */
-export async function providerFetch(
-  provider: ProviderName,
-  input: string,
-  init: RequestInit,
-): Promise<Response> {
-  try {
-    return await fetch(input, init);
-  } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    throw new ProviderError(`${provider} request failed: ${reason}`, {
-      provider,
-      kind: "transport",
-      cause,
-    });
-  }
-}
-
-/**
  * Build an `api` {@link ProviderError} from a non-2xx response, parsing the
  * provider's error body for a machine `code`/`type` where present.
  */

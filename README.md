@@ -23,6 +23,7 @@ today, and is being built toward **combining multiple providers on one prompt**.
   - [Provider configuration](#provider-configuration)
   - [Inspecting the registry](#inspecting-the-registry)
   - [Error handling](#error-handling)
+  - [Retries](#retries)
   - [Combining providers](#combining-providers)
     - [Consensus](#consensus)
     - [Pipeline](#pipeline)
@@ -43,6 +44,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
   to their HTTP APIs directly over the global `fetch` — no SDK dependency.
 - `ProviderRegistry` — a single point of access: configure your providers, then
   select one by name.
+- Automatic retry with exponential backoff on 429/503/529 (honoring
+  `Retry-After`), configurable per provider.
 - `registry.combine()` — make several providers **cooperate** on one prompt
   using a strategy: **consensus** (draft → critique → synthesize) or **pipeline**
   (a conveyor belt of providers refining one answer in sequence).
@@ -116,6 +119,7 @@ new ProviderRegistry({
     apiKey: "sk-ant-...", // required
     model: "claude-opus-4-8", // optional; this is the default
     baseUrl: "https://api.anthropic.com", // optional; this is the default
+    retry: { maxRetries: 2, baseDelayMs: 500 }, // optional; these are the defaults
   },
   openai: {
     apiKey: "sk-...", // required
@@ -171,9 +175,9 @@ try {
   console.log(result.text);
 } catch (err) {
   if (err instanceof ProviderError) {
-    if (err.status === 401) throw err; // bad key — don't retry
-    if (err.status === 429 || err.kind === "transport") {
-      // rate-limited or never reached the provider — back off and retry
+    if (err.status === 401) throw err; // bad key — unrecoverable
+    if (err.kind === "transport") {
+      // never reached the provider (network/DNS/abort)
     }
   }
   throw err;
@@ -186,6 +190,26 @@ fails.
 For `combine()`, individual provider failures are tolerated rather than thrown —
 each failed participant's `error` (a `ProviderError`) is recorded in the result;
 see [the failure policy](#combining-providers) below.
+
+### Retries
+
+Each provider automatically retries the routine retryable statuses — **429**
+(rate limit), **503** (unavailable), and **529** (Anthropic overloaded) — with
+bounded exponential backoff, for both `complete()` and `stream()`. A
+`Retry-After` response header is honored when present; otherwise the nth retry
+waits `baseDelayMs * 2 ** n`. The backoff respects the request's `AbortSignal`,
+so cancelling during a wait stops it. Transport failures (the request never
+landed) are **not** retried.
+
+Configure per provider with the `retry` option (defaults: 2 retries, 500ms
+base); set `maxRetries: 0` to disable:
+
+```ts
+new ProviderRegistry({
+  anthropic: { apiKey: key, retry: { maxRetries: 4, baseDelayMs: 1000 } },
+  openai: { apiKey: key, retry: { maxRetries: 0 } }, // no retry
+});
+```
 
 ### Combining providers
 
@@ -429,6 +453,7 @@ Exported from the package entry point:
   `CompletionResult`.
 - `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
   type — see [Error handling](#error-handling).
+- `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).
 - Combine types: `CombineRequest`, `CombineResult` (= `ConsensusResult` |
   `PipelineResult`), `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
   `CombineEvent`.

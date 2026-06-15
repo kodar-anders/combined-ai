@@ -265,7 +265,10 @@ describe("OpenAIProvider.stream", () => {
       text: () => Promise.resolve("rate limited"),
     }));
 
-    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const provider = new OpenAIProvider({
+      apiKey: "sk-test",
+      retry: { maxRetries: 0 },
+    });
     const run = async (): Promise<void> => {
       const sink: string[] = [];
       for await (const delta of provider.stream({
