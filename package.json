@@ -1,7 +1,27 @@
 {
   "name": "combined-ai",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Combine multiple AI providers (Anthropic, OpenAI, Gemini) behind one contract — select one by name, or have several cooperate on a prompt.",
+  "license": "MIT",
+  "author": "Anders Jansson",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kodar-anders/combined-ai.git"
+  },
+  "homepage": "https://github.com/kodar-anders/combined-ai#readme",
+  "bugs": "https://github.com/kodar-anders/combined-ai/issues",
+  "keywords": [
+    "ai",
+    "llm",
+    "anthropic",
+    "claude",
+    "openai",
+    "gpt",
+    "gemini",
+    "provider",
+    "consensus",
+    "ensemble"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
