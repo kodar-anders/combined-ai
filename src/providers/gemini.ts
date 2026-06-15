@@ -8,6 +8,7 @@ import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type FinishReason,
   type Message,
   type Provider,
 } from "../types";
@@ -64,9 +65,12 @@ export class GeminiProvider implements Provider {
     }
 
     const data: unknown = await response.json();
+    const rawFinishReason = extractFinishReason(data);
     return {
       text: extractText(data),
       model: extractModel(data, model),
+      finishReason: normalizeFinishReason(rawFinishReason),
+      rawFinishReason,
     };
   }
 
@@ -221,4 +225,43 @@ function extractModel(data: unknown, fallback: string): string {
     return data.modelVersion;
   }
   return fallback;
+}
+
+/**
+ * Gemini reports the stop reason on the first candidate. When the prompt itself
+ * was blocked there are no candidates, so fall back to `promptFeedback.blockReason`.
+ */
+function extractFinishReason(data: unknown): string | undefined {
+  const candidates = isRecord(data) ? toArray(data.candidates) : [];
+  const first = candidates[0];
+  if (isRecord(first) && typeof first.finishReason === "string") {
+    return first.finishReason;
+  }
+  const feedback = isRecord(data) ? data.promptFeedback : undefined;
+  if (isRecord(feedback) && typeof feedback.blockReason === "string") {
+    return feedback.blockReason;
+  }
+  return undefined;
+}
+
+/** Maps Gemini's `finishReason` (and prompt block reasons) onto the union. */
+function normalizeFinishReason(
+  raw: string | undefined,
+): FinishReason | undefined {
+  switch (raw) {
+    case undefined:
+      return undefined;
+    case "STOP":
+      return "stop";
+    case "MAX_TOKENS":
+      return "length";
+    case "SAFETY":
+    case "RECITATION":
+    case "BLOCKLIST":
+    case "PROHIBITED_CONTENT":
+    case "SPII":
+      return "content_filter";
+    default:
+      return "other";
+  }
 }

@@ -105,6 +105,49 @@ describe("AnthropicProvider.complete", () => {
     expect(init.signal).toBe(controller.signal);
   });
 
+  it("maps stop_reason and refusal blocks onto finishReason/refusal", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          stop_reason: "max_tokens",
+          content: [{ type: "text", text: "Partial" }],
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.finishReason).toBe("length");
+    expect(result.rawFinishReason).toBe("max_tokens");
+    expect(result.refusal).toBeUndefined();
+  });
+
+  it("flags a refusal stop and captures the refusal block text", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          stop_reason: "refusal",
+          content: [{ type: "refusal", text: "I can't help with that." }],
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.text).toBe("");
+    expect(result.finishReason).toBe("content_filter");
+    expect(result.rawFinishReason).toBe("refusal");
+    expect(result.refusal).toBe("I can't help with that.");
+  });
+
   it("retries a 429 and returns the eventual success", async () => {
     jest.useFakeTimers();
     let call = 0;

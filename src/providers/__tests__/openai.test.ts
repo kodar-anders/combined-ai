@@ -122,6 +122,54 @@ describe("OpenAIProvider.complete", () => {
     expect(init.signal).toBe(controller.signal);
   });
 
+  it("maps finish_reason length onto finishReason", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [
+            { finish_reason: "length", message: { content: "Truncated" } },
+          ],
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.finishReason).toBe("length");
+    expect(result.rawFinishReason).toBe("length");
+    expect(result.refusal).toBeUndefined();
+  });
+
+  it("surfaces a refusal as content_filter regardless of finish_reason", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { content: "", refusal: "I won't do that." },
+            },
+          ],
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.text).toBe("");
+    expect(result.finishReason).toBe("content_filter");
+    expect(result.rawFinishReason).toBe("stop");
+    expect(result.refusal).toBe("I won't do that.");
+  });
+
   it("throws a typed ProviderError parsing the OpenAI error body", async () => {
     mockFetch(() => ({
       ok: false,

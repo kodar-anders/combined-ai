@@ -9,6 +9,7 @@
 export type {
   CompletionRequest,
   CompletionResult,
+  FinishReason,
   Message,
   Provider,
   Role,

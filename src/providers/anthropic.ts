@@ -8,6 +8,7 @@ import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type FinishReason,
   type Provider,
 } from "../types";
 
@@ -66,9 +67,13 @@ export class AnthropicProvider implements Provider {
     }
 
     const data: unknown = await response.json();
+    const rawFinishReason = extractFinishReason(data);
     return {
       text: extractText(data),
       model: extractModel(data, model),
+      finishReason: normalizeFinishReason(rawFinishReason),
+      rawFinishReason,
+      refusal: extractRefusal(data),
     };
   }
 
@@ -213,4 +218,46 @@ function extractModel(data: unknown, fallback: string): string {
     return data.model;
   }
   return fallback;
+}
+
+function extractFinishReason(data: unknown): string | undefined {
+  if (isRecord(data) && typeof data.stop_reason === "string") {
+    return data.stop_reason;
+  }
+  return undefined;
+}
+
+/** Maps Anthropic's `stop_reason` onto the provider-agnostic union. */
+function normalizeFinishReason(
+  raw: string | undefined,
+): FinishReason | undefined {
+  switch (raw) {
+    case undefined:
+      return undefined;
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    case "max_tokens":
+      return "length";
+    case "refusal":
+      return "content_filter";
+    default:
+      return "other";
+  }
+}
+
+/** Text from any `type: "refusal"` content blocks `extractText` skips. */
+function extractRefusal(data: unknown): string | undefined {
+  const content = isRecord(data) ? toArray(data.content) : [];
+  let refusal = "";
+  for (const block of content) {
+    if (
+      isRecord(block) &&
+      block.type === "refusal" &&
+      typeof block.text === "string"
+    ) {
+      refusal += block.text;
+    }
+  }
+  return refusal === "" ? undefined : refusal;
 }

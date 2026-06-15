@@ -8,6 +8,7 @@ import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type FinishReason,
   type Message,
   type Provider,
 } from "../types";
@@ -66,9 +67,19 @@ export class OpenAIProvider implements Provider {
     }
 
     const data: unknown = await response.json();
+    const rawFinishReason = extractFinishReason(data);
+    const refusal = extractRefusal(data);
     return {
       text: extractText(data),
       model: extractModel(data, model),
+      // A refusal is a content-filter outcome even though OpenAI still reports
+      // finish_reason: "stop", so surface it as such regardless of the raw value.
+      finishReason:
+        refusal === undefined
+          ? normalizeFinishReason(rawFinishReason)
+          : "content_filter",
+      rawFinishReason,
+      refusal,
     };
   }
 
@@ -225,4 +236,39 @@ function extractModel(data: unknown, fallback: string): string {
     return data.model;
   }
   return fallback;
+}
+
+function extractFinishReason(data: unknown): string | undefined {
+  const reason = firstChoice(data)?.finish_reason;
+  return typeof reason === "string" ? reason : undefined;
+}
+
+/** Maps OpenAI's `finish_reason` onto the provider-agnostic union. */
+function normalizeFinishReason(
+  raw: string | undefined,
+): FinishReason | undefined {
+  switch (raw) {
+    case undefined:
+      return undefined;
+    case "stop":
+      return "stop";
+    case "length":
+      return "length";
+    case "content_filter":
+      return "content_filter";
+    default:
+      return "other";
+  }
+}
+
+function extractRefusal(data: unknown): string | undefined {
+  const message = firstChoice(data)?.message;
+  if (
+    isRecord(message) &&
+    typeof message.refusal === "string" &&
+    message.refusal !== ""
+  ) {
+    return message.refusal;
+  }
+  return undefined;
 }
