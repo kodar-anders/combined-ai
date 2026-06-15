@@ -279,7 +279,10 @@ describe("GeminiProvider.stream", () => {
       text: () => Promise.resolve("rate limited"),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GeminiProvider({
+      apiKey: "key-test",
+      retry: { maxRetries: 0 },
+    });
     const run = async (): Promise<void> => {
       const sink: string[] = [];
       for await (const delta of provider.stream({

@@ -105,6 +105,44 @@ describe("AnthropicProvider.complete", () => {
     expect(init.signal).toBe(controller.signal);
   });
 
+  it("retries a 429 and returns the eventual success", async () => {
+    jest.useFakeTimers();
+    let call = 0;
+    const fetchMock = mockFetch(() => {
+      call += 1;
+      if (call < 2) {
+        return {
+          ok: false,
+          status: 429,
+          headers: new Headers(),
+          text: () => Promise.resolve("rate limited"),
+        };
+      }
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            model: "claude-opus-4-8",
+            content: [{ type: "text", text: "Recovered." }],
+          }),
+      };
+    });
+
+    const provider = new AnthropicProvider({
+      apiKey: "sk-test",
+      retry: { baseDelayMs: 10 },
+    });
+    const promise = provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+    await jest.advanceTimersByTimeAsync(1000);
+    const result = await promise;
+
+    expect(result.text).toBe("Recovered.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
   it("throws a typed ProviderError on a non-2xx response", async () => {
     mockFetch(() => ({
       ok: false,
@@ -276,7 +314,10 @@ describe("AnthropicProvider.stream", () => {
       text: () => Promise.resolve("overloaded"),
     }));
 
-    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const provider = new AnthropicProvider({
+      apiKey: "sk-test",
+      retry: { maxRetries: 0 },
+    });
     const run = async (): Promise<void> => {
       const sink: string[] = [];
       for await (const delta of provider.stream({

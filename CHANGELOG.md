@@ -50,6 +50,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   bare `TypeError`. Consumers can branch on `err.status` / `err.kind` instead of
   regex-matching the message. A failed participant's `error` in a `combine()`
   result is a `ProviderError` too.
+- Automatic retry with bounded exponential backoff on the routine retryable
+  statuses (429 rate limit, 503 unavailable, 529 Anthropic overloaded), for both
+  `complete()` and `stream()` across all three providers. Honors a `Retry-After`
+  response header when present; the backoff wait respects the request's
+  `AbortSignal`. Configurable per provider via a `retry` option
+  (`{ maxRetries?, baseDelayMs? }`, exported as `RetryOptions`); defaults to 2
+  retries from a 500ms base. Set `maxRetries: 0` to disable. Transport failures
+  (no response) are not retried.
 - Robust SSE parsing across all three providers' `stream()`: blank or malformed
   `data:` lines are tolerated (empty payloads skipped, each `JSON.parse` guarded
   so a bad frame is dropped rather than stranding tokens already yielded).
