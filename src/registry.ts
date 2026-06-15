@@ -14,6 +14,7 @@ import {
   STRATEGY_NAMES,
 } from "./combine";
 import { consensus } from "./combine/consensus";
+import { pipeline } from "./combine/pipeline";
 import {
   AnthropicProvider,
   type AnthropicProviderOptions,
@@ -67,9 +68,11 @@ export class ProviderRegistry {
 
   /**
    * Combine several configured providers to cooperate on one prompt using a
-   * cooperation strategy (currently consensus). Participants are picked by
-   * name and validated like {@link ProviderRegistry.select}; the synthesizer
-   * defaults to the first participant.
+   * cooperation strategy — `consensus` (draft → critique → synthesize) or
+   * `pipeline` (sequential refinement). Participants are picked by name and
+   * validated like {@link ProviderRegistry.select}. Strategy-specific options
+   * (`synthesizer`, `minParticipants`, `attribution`) are validated and applied
+   * only by the strategy that uses them.
    */
   async combine(
     request: CombineRequest,
@@ -87,17 +90,6 @@ export class ProviderRegistry {
     if (request.messages.length === 0) {
       throw new Error("combine requires at least one message");
     }
-    const { minParticipants } = request;
-    if (minParticipants !== undefined) {
-      if (!Number.isInteger(minParticipants) || minParticipants < 1) {
-        throw new Error("combine minParticipants must be a positive integer");
-      }
-      if (minParticipants > request.participants.length) {
-        throw new Error(
-          `combine minParticipants (${String(minParticipants)}) cannot exceed the number of participants (${String(request.participants.length)})`,
-        );
-      }
-    }
     const knownStrategies: readonly string[] = STRATEGY_NAMES;
     if (
       request.strategy !== undefined &&
@@ -112,16 +104,46 @@ export class ProviderRegistry {
       name,
       provider: this.select(name),
     }));
-    const synthesizer = request.synthesizer ?? firstParticipant;
-    if (!request.participants.includes(synthesizer)) {
+
+    const strategy = request.strategy ?? "consensus";
+    switch (strategy) {
+      // `synthesizer`/`minParticipants` are consensus-only, so they're validated
+      // here (not in the shared preamble) — pipeline ignores them entirely.
+      case "consensus": {
+        this.#validateConsensusOptions(request);
+        const synthesizer = request.synthesizer ?? firstParticipant;
+        return consensus(roster, synthesizer, request, options?.onEvent);
+      }
+      case "pipeline":
+        return pipeline(roster, request, options?.onEvent);
+      default: {
+        const unreachable: never = strategy;
+        throw new Error(`Unhandled combine strategy "${String(unreachable)}"`);
+      }
+    }
+  }
+
+  /** Validate the consensus-only request options (`minParticipants`, `synthesizer`). */
+  #validateConsensusOptions(request: CombineRequest): void {
+    const { minParticipants } = request;
+    if (minParticipants !== undefined) {
+      if (!Number.isInteger(minParticipants) || minParticipants < 1) {
+        throw new Error("combine minParticipants must be a positive integer");
+      }
+      if (minParticipants > request.participants.length) {
+        throw new Error(
+          `combine minParticipants (${String(minParticipants)}) cannot exceed the number of participants (${String(request.participants.length)})`,
+        );
+      }
+    }
+    if (
+      request.synthesizer !== undefined &&
+      !request.participants.includes(request.synthesizer)
+    ) {
       throw new Error(
-        `Synthesizer "${synthesizer}" must be one of the participants: ${request.participants.join(", ")}`,
+        `Synthesizer "${request.synthesizer}" must be one of the participants: ${request.participants.join(", ")}`,
       );
     }
-
-    // Only the consensus strategy exists today; future strategies
-    // (conveyor belt, court) branch here on `request.strategy`.
-    return consensus(roster, synthesizer, request, options?.onEvent);
   }
 
   /** Whether a provider is configured under `name`. */

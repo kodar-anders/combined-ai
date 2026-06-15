@@ -11,8 +11,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
 > **Status: early.** The core abstraction and three providers (Anthropic /
 > Claude, OpenAI, and Google Gemini) are in place, with completion and streaming,
 > plus a registry to select a provider by name. Multi-provider combination has
-> landed with its first strategy, **consensus** — see
-> [Combining providers](#combining-providers-consensus) and [Roadmap](#roadmap).
+> landed with two strategies, **consensus** and **pipeline** — see
+> [Combining providers](#combining-providers) and [Roadmap](#roadmap).
 
 ## Contents
 
@@ -23,7 +23,9 @@ today, and is being built toward **combining multiple providers on one prompt**.
   - [Provider configuration](#provider-configuration)
   - [Inspecting the registry](#inspecting-the-registry)
   - [Error handling](#error-handling)
-  - [Combining providers (consensus)](#combining-providers-consensus)
+  - [Combining providers](#combining-providers)
+    - [Consensus](#consensus)
+    - [Pipeline](#pipeline)
   - [Combine progress events](#combine-progress-events)
   - [Request options](#request-options)
 - [Public API](#public-api)
@@ -42,8 +44,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
 - `ProviderRegistry` — a single point of access: configure your providers, then
   select one by name.
 - `registry.combine()` — make several providers **cooperate** on one prompt
-  using a strategy. The first strategy is **consensus** (draft → critique →
-  synthesize).
+  using a strategy: **consensus** (draft → critique → synthesize) or **pipeline**
+  (a conveyor belt of providers refining one answer in sequence).
 - Dual ESM + CJS package with TypeScript types.
 
 ## Requirements
@@ -169,12 +171,49 @@ try {
 ```
 
 For `combine()`, individual provider failures are tolerated rather than thrown —
-see [the failure policy](#combining-providers-consensus) below.
+see [the failure policy](#combining-providers) below.
 
-### Combining providers (consensus)
+### Combining providers
 
 Beyond selecting one provider, you can make several **cooperate** on a single
-prompt with `registry.combine()`. The only strategy today is **consensus**:
+prompt with `registry.combine()`. Pick a strategy with `strategy` (defaults to
+`"consensus"`):
+
+| Strategy      | Shape                          | Final answer                        |
+| ------------- | ------------------------------ | ----------------------------------- |
+| `"consensus"` | draft → critique → synthesize  | written by the _synthesizer_        |
+| `"pipeline"`  | sequential refinement (a belt) | the last stage to produce an answer |
+
+`combine()` accepts the same `CompletionRequest` fields as `complete()`
+(`messages`, `system`, `model`, `maxTokens`) — they apply to every participant —
+plus:
+
+| Field             | Type                             | Notes                                                                                                                                |
+| ----------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `participants`    | `ProviderName[]`                 | Required. Must be configured, non-empty, and unique; validated like `select()`. For `pipeline`, the order is the conveyor order.     |
+| `strategy`        | `"consensus"` \| `"pipeline"`    | Optional. Defaults to `"consensus"`.                                                                                                 |
+| `synthesizer`     | `ProviderName`                   | _Consensus only._ Must be a participant. Defaults to the first. Ignored by `pipeline`.                                               |
+| `attribution`     | `"attributed"` \| `"anonymized"` | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias; `"attributed"` shows provider names. Ignored by `pipeline`.    |
+| `minParticipants` | `number`                         | _Consensus only._ Minimum drafts required to proceed (default 2). A positive integer ≤ the participant count. Ignored by `pipeline`. |
+
+`combine()` returns a `CombineResult` **discriminated on `strategy`** — narrow on
+`result.strategy` to reach the strategy-specific fields:
+
+```ts
+const result = await registry.combine({ messages, participants });
+if (result.strategy === "consensus") {
+  result.synthesizer; // who wrote the final answer
+  result.drafts; // each participant's first-pass answer (or failure)
+  result.critiques; // each participant's critique (or failure)
+} else {
+  result.finalProvider; // the last stage that produced an answer
+  result.stages; // each stage in conveyor order (or failure)
+}
+```
+
+#### Consensus
+
+The default strategy:
 
 1. **Draft** — the prompt goes to every participant in parallel; each writes its
    own answer.
@@ -188,27 +227,12 @@ const result = await registry.combine({
   messages: [{ role: "user", content: "Design a rate limiter." }],
   participants: ["anthropic", "openai", "gemini"], // who takes part
   synthesizer: "anthropic", // optional; defaults to the first participant
-  // strategy: "consensus",                          // optional; the only value today
+  // strategy: "consensus",                          // optional; the default
   // attribution: "attributed",                     // optional; default "anonymized"
 });
 
 console.log(result.text); // the final synthesized answer
-console.log(result.synthesizer); // who wrote it (a fallback if the chosen one failed)
-console.log(result.drafts); // each participant's first-pass answer (or failure)
-console.log(result.critiques); // each participant's critique (or failure)
 ```
-
-`combine()` accepts the same `CompletionRequest` fields as `complete()`
-(`messages`, `system`, `model`, `maxTokens`) — they apply to every participant —
-plus:
-
-| Field             | Type                             | Notes                                                                                                                             |
-| ----------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `participants`    | `ProviderName[]`                 | Required. Must be configured, non-empty, and unique; validated like `select()`.                                                   |
-| `synthesizer`     | `ProviderName`                   | Optional. Must be a participant. Defaults to the first.                                                                           |
-| `strategy`        | `"consensus"`                    | Optional. Defaults to `"consensus"` (the only value today).                                                                       |
-| `attribution`     | `"attributed"` \| `"anonymized"` | Optional. Default `"anonymized"` (Answer A/B/C) reduces bias; `"attributed"` shows provider names. The result always keeps names. |
-| `minParticipants` | `number`                         | Optional. Minimum drafts required to proceed (default 2). Must be a positive integer ≤ the participant count.                     |
 
 Behavior notes:
 
@@ -249,6 +273,47 @@ Behavior notes:
   empty text**, it falls back to the next surviving participant.
 - **A single participant** degrades to a plain completion (no critique/synthesis).
 
+#### Pipeline
+
+A conveyor belt: each participant refines the previous one's answer, in order.
+The first participant writes an initial answer; each subsequent participant gets
+the question plus the current running answer and improves it; the **last stage to
+produce an answer is the final answer**.
+
+```ts
+const result = await registry.combine({
+  messages: [{ role: "user", content: "Design a rate limiter." }],
+  participants: ["anthropic", "openai", "gemini"], // the conveyor order
+  strategy: "pipeline",
+});
+
+console.log(result.text); // the final, refined answer
+console.log(result.finalProvider); // the last stage that produced an answer
+console.log(result.stages); // every stage in order (each "ok" or "failed")
+```
+
+Behavior notes:
+
+- **Order is the conveyor order.** `participants[0]` writes first; each later
+  participant refines what it received. You control the belt by ordering them.
+- **Refiners preserve, not rewrite.** Each refining stage is told to treat the
+  current answer as a strong baseline — fix errors, fill gaps, sharpen wording,
+  but keep what's correct and return it unchanged if it can't improve it. There is
+  no downstream synthesizer to catch a regression, so the framing guards against
+  one.
+- **Partial failures carry the answer forward.** A stage that fails or returns
+  empty text is recorded in `result.stages` (as `status: "failed"`) and the
+  previous running answer moves to the next stage unchanged. The run throws only
+  if **no** stage produces an answer. A leading run of failed stages just means a
+  later stage writes the first answer.
+- **The final answer is sanitized** (the same pass consensus uses) when a
+  refining stage actually changed it, to strip any "I improved the previous
+  answer…" narration — one extra model call; on failure it returns the
+  un-sanitized answer. A lone first-stage answer, or a refiner that returned the
+  text unchanged, is returned as-is (no wasted call).
+- `synthesizer`, `attribution`, and `minParticipants` are consensus-specific and
+  ignored.
+
 ### Combine progress events
 
 `combine()` takes an optional second argument (`CombineOptions`) with an
@@ -266,11 +331,16 @@ await registry.combine(
     onEvent: (event) => {
       switch (event.type) {
         case "phase":
-          console.log(`→ ${event.phase}`); // "drafting" | "critiquing" | "synthesizing"
+          console.log(`→ ${event.phase}`); // consensus: "drafting" | "critiquing" | "synthesizing"
           break;
         case "draft":
         case "critique":
-          console.log(`  ${event.provider}: ${event.status}`); // "ok" | "failed"
+          console.log(`  ${event.provider}: ${event.status}`); // consensus; "ok" | "failed"
+          break;
+        case "stage":
+          console.log(
+            `  stage ${event.index} ${event.provider}: ${event.status}`,
+          ); // pipeline
           break;
       }
     },
@@ -280,15 +350,17 @@ await registry.combine(
 
 `CombineEvent` is a discriminated union on `type`:
 
-| `type`       | Fields               | When                                                           |
-| ------------ | -------------------- | -------------------------------------------------------------- |
-| `"phase"`    | `phase`              | At each phase boundary (drafting / critiquing / synthesizing). |
-| `"draft"`    | `provider`, `status` | As each participant's draft settles.                           |
-| `"critique"` | `provider`, `status` | As each survivor's critique settles.                           |
+| `type`       | Fields                        | When                                                                        |
+| ------------ | ----------------------------- | --------------------------------------------------------------------------- |
+| `"phase"`    | `phase`                       | _Consensus._ At each phase boundary (drafting / critiquing / synthesizing). |
+| `"draft"`    | `provider`, `status`          | _Consensus._ As each participant's draft settles.                           |
+| `"critique"` | `provider`, `status`          | _Consensus._ As each survivor's critique settles.                           |
+| `"stage"`    | `provider`, `status`, `index` | _Pipeline._ As each stage settles, in conveyor order (`index` 0-based).     |
 
-`draft`/`critique` events arrive in completion order (which may differ from
-participant order); there is no terminal event (the result is the return value);
-and errors thrown from `onEvent` are swallowed so a listener can't break the run.
+Consensus `draft`/`critique` events arrive in completion order (which may differ
+from participant order); pipeline `stage` events arrive in conveyor order. There
+is no terminal event (the result is the return value), and errors thrown from
+`onEvent` are swallowed so a listener can't break the run.
 
 ### Request options
 
@@ -318,8 +390,9 @@ Exported from the package entry point:
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
   `CompletionResult`.
-- Combine types: `CombineRequest`, `CombineResult`, `ParticipantOutcome`,
-  `StrategyName`, `CombineOptions`, `CombineEvent`.
+- Combine types: `CombineRequest`, `CombineResult` (= `ConsensusResult` |
+  `PipelineResult`), `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
+  `CombineEvent`.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GeminiProvider`) are **not** exported — they are constructed internally by the
@@ -360,12 +433,14 @@ yarn test:integration openai.integration      # OpenAI only
 yarn test:integration anthropic.integration    # Anthropic only
 yarn test:integration gemini.integration       # Gemini only
 yarn test:integration consensus.integration    # consensus combine (all three)
+yarn test:integration pipeline.integration      # pipeline combine (all three)
 ```
 
-The consensus combine suite (`consensus.integration`) is **triple-gated**: it
-runs only with `RUN_LIVE_TESTS=1` **and all three** provider keys set, since it
-exercises the full three-way draft → critique → synthesize flow. It makes
-several paid calls (3 drafts + 3 critiques + 1 synthesis) on the cheap models.
+The combine suites (`consensus.integration`, `pipeline.integration`) are
+**triple-gated**: each runs only with `RUN_LIVE_TESTS=1` **and all three**
+provider keys set, since they exercise the full three-way flow. They make several
+paid calls on the cheap models (consensus: 3 drafts + 3 critiques + 1 synthesis;
+pipeline: 3 sequential stages + 1 sanitize).
 
 `.env` is gitignored and loaded automatically for the test run. Live tests use a
 cheap model and a small token cap, so cost is negligible (Gemini uses a slightly
@@ -378,7 +453,8 @@ larger cap to leave room for its thinking tokens — see the Gemini note above).
 - [x] Provider registry / selection by name.
 - [x] A third provider (Google Gemini) behind the same interface.
 - [x] Combine multiple providers on one prompt — the **consensus** strategy.
-- [ ] More combine strategies (conveyor belt, court) and streaming for combine.
+- [x] A second combine strategy — **pipeline** (sequential refinement).
+- [ ] More combine strategies (e.g. court) and streaming for combine.
 
 ## Changelog
 
