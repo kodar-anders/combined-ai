@@ -43,7 +43,11 @@ export type CombineRequest = CompletionRequest & {
   minParticipants?: number;
 };
 
-/** The outcome of one participant in one phase — either its result or its failure. */
+/**
+ * The outcome of one participant in one phase — either its result or its failure.
+ * A failure's `error` is typically a `ProviderError` (carrying `status`/`kind`/
+ * `code`); narrow with `instanceof ProviderError` to read those fields.
+ */
 export type ParticipantOutcome =
   | { provider: ProviderName; status: "ok"; result: CompletionResult }
   | { provider: ProviderName; status: "failed"; error: Error };

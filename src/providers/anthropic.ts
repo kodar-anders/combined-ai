@@ -3,6 +3,7 @@
  * `fetch` — no SDK dependency.
  */
 
+import { apiError, providerFetch } from "../errors";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -41,16 +42,20 @@ export class AnthropicProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
-    const response = await fetch(`${this.#baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: this.#headers(),
-      body: JSON.stringify(
-        this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
-      ),
-    });
+    const response = await providerFetch(
+      "anthropic",
+      `${this.#baseUrl}/v1/messages`,
+      {
+        method: "POST",
+        headers: this.#headers(),
+        body: JSON.stringify(
+          this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
+        ),
+      },
+    );
 
     if (!response.ok) {
-      throw await requestError(response);
+      throw await apiError("anthropic", response);
     }
 
     const data: unknown = await response.json();
@@ -64,16 +69,20 @@ export class AnthropicProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
-    const response = await fetch(`${this.#baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: this.#headers(),
-      body: JSON.stringify(
-        this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
-      ),
-    });
+    const response = await providerFetch(
+      "anthropic",
+      `${this.#baseUrl}/v1/messages`,
+      {
+        method: "POST",
+        headers: this.#headers(),
+        body: JSON.stringify(
+          this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
+        ),
+      },
+    );
 
     if (!response.ok) {
-      throw await requestError(response);
+      throw await apiError("anthropic", response);
     }
     if (!response.body) {
       throw new Error("Anthropic streaming response had no body");
@@ -165,11 +174,6 @@ export class AnthropicProvider implements Provider {
     }
     return body;
   }
-}
-
-async function requestError(response: Response): Promise<Error> {
-  const detail = await response.text();
-  return new Error(`Anthropic request failed (${response.status}): ${detail}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

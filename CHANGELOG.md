@@ -7,19 +7,6 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
-### Fixed
-
-- SSE streaming in all three providers no longer crashes mid-stream on a blank
-  or malformed `data:` line: empty payloads are skipped and each `JSON.parse` is
-  guarded so a bad frame is dropped rather than throwing and stranding tokens
-  already yielded.
-- SSE streaming in all three providers now releases the response body reader on
-  every exit path (normal end, thrown error, or a consumer `break`ing out of the
-  `for await`) via `try/finally { await reader.cancel(); }`, preventing a leaked
-  socket on long-running servers.
-
-## [0.1.0] - 2026-06-15
-
 ### Added
 
 - Core, provider-agnostic contract in `src/types.ts`: `Provider`, `Message`,
@@ -50,6 +37,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   `generationConfig.maxOutputTokens`. Note: Gemini 2.5 are thinking models, so
   thinking tokens count against `maxTokens` — a very small cap can leave the
   visible answer empty/truncated (documented in the README).
+- `ProviderError` (exported) — a typed error every provider throws, carrying
+  `provider`, a `kind` discriminant (`"api"` for an error HTTP response vs
+  `"transport"` for a request that never landed), `status` (for `"api"`), and a
+  `code`/`type` parsed from the provider's error body. Raw `fetch` rejections
+  (network/DNS/abort) are wrapped as `kind: "transport"` instead of escaping as a
+  bare `TypeError`. Consumers can branch on `err.status` / `err.kind` instead of
+  regex-matching the message. A failed participant's `error` in a `combine()`
+  result is a `ProviderError` too.
+- Robust SSE parsing across all three providers' `stream()`: blank or malformed
+  `data:` lines are tolerated (empty payloads skipped, each `JSON.parse` guarded
+  so a bad frame is dropped rather than stranding tokens already yielded).
+- `stream()` releases the response body reader on every exit path (normal end,
+  thrown error, or a consumer `break`ing out of the `for await`) via
+  `try/finally { await reader.cancel(); }`, so a long-running server can't leak a
+  socket.
 - `ProviderRegistry.combine()` — combine multiple configured providers to
   cooperate on one prompt using a strategy. The first strategy is **consensus**:
   every participant drafts an answer in parallel, then every participant

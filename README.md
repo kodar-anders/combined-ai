@@ -147,34 +147,44 @@ selecting a name you didn't configure throws at runtime.
 
 ### Error handling
 
-A failed API call rejects (for `complete()`) or throws when you start iterating
-(for `stream()`) with a plain `Error` whose message includes the HTTP status and
-the provider's response body — wrap calls in `try`/`catch`:
+A failed call rejects (for `complete()`) or throws when you start iterating (for
+`stream()`) with a `ProviderError` — branch on its fields rather than matching
+the message string:
+
+| Field      | Type                     | Meaning                                                                                     |
+| ---------- | ------------------------ | ------------------------------------------------------------------------------------------- |
+| `kind`     | `"api"` \| `"transport"` | `"api"` = the provider returned an error response; `"transport"` = the request never landed |
+| `provider` | `"anthropic" \| …`       | Which provider failed.                                                                      |
+| `status`   | `number \| undefined`    | HTTP status for `kind: "api"`; `undefined` for transport failures.                          |
+| `code`     | `string \| undefined`    | Machine code from the body, where the provider sends one (e.g. `"invalid_api_key"`).        |
+| `type`     | `string \| undefined`    | Error category from the body (Anthropic/OpenAI `type`, Gemini `status`).                    |
+| `body`     | `string \| undefined`    | The raw error body, for `kind: "api"`.                                                      |
+| `cause`    | `unknown`                | The underlying `fetch` rejection, for `kind: "transport"`.                                  |
 
 ```ts
+import { ProviderError } from "combined-ai";
+
 try {
   const result = await provider.complete({
     messages: [{ role: "user", content: "Hello." }],
   });
   console.log(result.text);
 } catch (err) {
-  // e.g. Error: Anthropic request failed (401): { ...error body... }
-  console.error("completion failed:", err);
-}
-
-// Streaming throws on the first iteration if the request fails:
-try {
-  for await (const delta of provider.stream({
-    messages: [{ role: "user", content: "Hello." }],
-  })) {
-    process.stdout.write(delta);
+  if (err instanceof ProviderError) {
+    if (err.status === 401) throw err; // bad key — don't retry
+    if (err.status === 429 || err.kind === "transport") {
+      // rate-limited or never reached the provider — back off and retry
+    }
   }
-} catch (err) {
-  console.error("stream failed:", err);
+  throw err;
 }
 ```
 
+Streaming throws the same `ProviderError` on the first iteration if the request
+fails.
+
 For `combine()`, individual provider failures are tolerated rather than thrown —
+each failed participant's `error` (a `ProviderError`) is recorded in the result;
 see [the failure policy](#combining-providers) below.
 
 ### Combining providers
@@ -394,6 +404,8 @@ Exported from the package entry point:
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `CompletionRequest`,
   `CompletionResult`.
+- `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
+  type — see [Error handling](#error-handling).
 - Combine types: `CombineRequest`, `CombineResult` (= `ConsensusResult` |
   `PipelineResult`), `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
   `CombineEvent`.
