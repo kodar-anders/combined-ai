@@ -1,7 +1,7 @@
 {
   "name": "combined-ai",
   "version": "1.0.0",
-  "description": "",
+  "description": "Combine multiple AI providers (Anthropic, OpenAI, Gemini) behind one contract — select one by name, or have several cooperate on a prompt.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

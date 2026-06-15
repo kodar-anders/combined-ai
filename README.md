@@ -1,5 +1,9 @@
 # combined-ai
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933.svg)](https://nodejs.org/)
+
 A small TypeScript library that combines several AI providers behind one
 interface. It lets you talk to a provider through a single, consistent contract
 today, and is being built toward **combining multiple providers on one prompt**.
@@ -9,6 +13,24 @@ today, and is being built toward **combining multiple providers on one prompt**.
 > plus a registry to select a provider by name. Multi-provider combination has
 > landed with its first strategy, **consensus** — see
 > [Combining providers](#combining-providers-consensus) and [Roadmap](#roadmap).
+
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Provider configuration](#provider-configuration)
+  - [Inspecting the registry](#inspecting-the-registry)
+  - [Error handling](#error-handling)
+  - [Combining providers (consensus)](#combining-providers-consensus)
+  - [Combine progress events](#combine-progress-events)
+  - [Request options](#request-options)
+- [Public API](#public-api)
+- [Development](#development)
+- [Roadmap](#roadmap)
+- [Changelog](#changelog)
+- [License](#license)
 
 ## Features
 
@@ -116,6 +138,38 @@ registry.select("openai");
 `select()` only accepts a known provider name
 (`"anthropic"` | `"openai"` | `"gemini"`), so typos are caught at compile time;
 selecting a name you didn't configure throws at runtime.
+
+### Error handling
+
+A failed API call rejects (for `complete()`) or throws when you start iterating
+(for `stream()`) with a plain `Error` whose message includes the HTTP status and
+the provider's response body — wrap calls in `try`/`catch`:
+
+```ts
+try {
+  const result = await provider.complete({
+    messages: [{ role: "user", content: "Hello." }],
+  });
+  console.log(result.text);
+} catch (err) {
+  // e.g. Error: Anthropic request failed (401): { ...error body... }
+  console.error("completion failed:", err);
+}
+
+// Streaming throws on the first iteration if the request fails:
+try {
+  for await (const delta of provider.stream({
+    messages: [{ role: "user", content: "Hello." }],
+  })) {
+    process.stdout.write(delta);
+  }
+} catch (err) {
+  console.error("stream failed:", err);
+}
+```
+
+For `combine()`, individual provider failures are tolerated rather than thrown —
+see [the failure policy](#combining-providers-consensus) below.
 
 ### Combining providers (consensus)
 
@@ -326,6 +380,11 @@ larger cap to leave room for its thinking tokens — see the Gemini note above).
 - [x] Combine multiple providers on one prompt — the **consensus** strategy.
 - [ ] More combine strategies (conveyor belt, court) and streaming for combine.
 
+## Changelog
+
+Notable changes are recorded in [CHANGELOG.md](./CHANGELOG.md), following the
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
 ## License
 
-Not yet specified (private package).
+[MIT](./LICENSE) © Anders Jansson
