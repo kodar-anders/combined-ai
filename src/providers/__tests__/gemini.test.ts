@@ -158,6 +158,57 @@ describe("GeminiProvider.stream", () => {
     expect(body.generationConfig.maxOutputTokens).toBe(64000);
   });
 
+  it("skips blank and non-JSON data lines mid-stream", async () => {
+    mockFetch(() => ({
+      ok: true,
+      body: sseStream([
+        'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}\n\n',
+        "data:\n\n",
+        "data: not json\n\n",
+        'data: {"candidates":[{"content":{"parts":[{"text":" world"}]}}]}\n\n',
+      ]),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const deltas: string[] = [];
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toEqual(["Hello", " world"]);
+  });
+
+  it("releases the reader when the consumer breaks early", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}\n\n',
+          ),
+        );
+        // Deliberately leave the stream open so only an early break ends it.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    mockFetch(() => ({ ok: true, body }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+    })) {
+      expect(delta).toBe("Hello");
+      break;
+    }
+
+    expect(cancelled).toBe(true);
+  });
+
   it("throws on a streamed error event", async () => {
     mockFetch(() => ({
       ok: true,

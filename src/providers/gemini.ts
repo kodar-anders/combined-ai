@@ -79,38 +79,50 @@ export class GeminiProvider implements Provider {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    let result = await reader.read();
-    while (!result.done) {
-      buffer += decoder.decode(result.value as Uint8Array, { stream: true });
+    try {
+      let result = await reader.read();
+      while (!result.done) {
+        buffer += decoder.decode(result.value as Uint8Array, { stream: true });
 
-      for (
-        let nl = buffer.indexOf("\n");
-        nl !== -1;
-        nl = buffer.indexOf("\n")
-      ) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
+        for (
+          let nl = buffer.indexOf("\n");
+          nl !== -1;
+          nl = buffer.indexOf("\n")
+        ) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
 
-        if (!line.startsWith("data:")) {
-          continue;
-        }
-        const payload = line.slice("data:".length).trim();
-        const parsed: unknown = JSON.parse(payload);
-        if (!isRecord(parsed)) {
-          continue;
+          if (!line.startsWith("data:")) {
+            continue;
+          }
+          const payload = line.slice("data:".length).trim();
+          if (payload === "") {
+            continue;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+          if (!isRecord(parsed)) {
+            continue;
+          }
+
+          if (isRecord(parsed.error)) {
+            throw new Error(`Gemini stream error: ${payload}`);
+          }
+
+          const text = extractText(parsed);
+          if (text.length > 0) {
+            yield text;
+          }
         }
 
-        if (isRecord(parsed.error)) {
-          throw new Error(`Gemini stream error: ${payload}`);
-        }
-
-        const text = extractText(parsed);
-        if (text.length > 0) {
-          yield text;
-        }
+        result = await reader.read();
       }
-
-      result = await reader.read();
+    } finally {
+      await reader.cancel();
     }
   }
 

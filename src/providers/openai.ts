@@ -83,41 +83,53 @@ export class OpenAIProvider implements Provider {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    let result = await reader.read();
-    while (!result.done) {
-      buffer += decoder.decode(result.value as Uint8Array, { stream: true });
+    try {
+      let result = await reader.read();
+      while (!result.done) {
+        buffer += decoder.decode(result.value as Uint8Array, { stream: true });
 
-      for (
-        let nl = buffer.indexOf("\n");
-        nl !== -1;
-        nl = buffer.indexOf("\n")
-      ) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
+        for (
+          let nl = buffer.indexOf("\n");
+          nl !== -1;
+          nl = buffer.indexOf("\n")
+        ) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
 
-        if (!line.startsWith("data:")) {
-          continue;
-        }
-        const payload = line.slice("data:".length).trim();
-        if (payload === "[DONE]") {
-          return;
-        }
-        const parsed: unknown = JSON.parse(payload);
-        if (!isRecord(parsed)) {
-          continue;
+          if (!line.startsWith("data:")) {
+            continue;
+          }
+          const payload = line.slice("data:".length).trim();
+          if (payload === "[DONE]") {
+            return;
+          }
+          if (payload === "") {
+            continue;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+          if (!isRecord(parsed)) {
+            continue;
+          }
+
+          if (isRecord(parsed.error)) {
+            throw new Error(`OpenAI stream error: ${payload}`);
+          }
+
+          const delta = firstChoiceDelta(parsed);
+          if (isRecord(delta) && typeof delta.content === "string") {
+            yield delta.content;
+          }
         }
 
-        if (isRecord(parsed.error)) {
-          throw new Error(`OpenAI stream error: ${payload}`);
-        }
-
-        const delta = firstChoiceDelta(parsed);
-        if (isRecord(delta) && typeof delta.content === "string") {
-          yield delta.content;
-        }
+        result = await reader.read();
       }
-
-      result = await reader.read();
+    } finally {
+      await reader.cancel();
     }
   }
 

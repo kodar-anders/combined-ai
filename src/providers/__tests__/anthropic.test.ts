@@ -129,6 +129,58 @@ describe("AnthropicProvider.stream", () => {
     expect(body.max_tokens).toBe(64000);
   });
 
+  it("skips blank and non-JSON data lines mid-stream", async () => {
+    mockFetch(() => ({
+      ok: true,
+      body: sseStream([
+        'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}\n\n',
+        "data:\n\n",
+        "data: not json\n\n",
+        'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const deltas: string[] = [];
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toEqual(["Hello", " world"]);
+  });
+
+  it("releases the reader when the consumer breaks early", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}\n\n',
+          ),
+        );
+        // Deliberately leave the stream open so only an early break ends it.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    mockFetch(() => ({ ok: true, body }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+    })) {
+      expect(delta).toBe("Hello");
+      break;
+    }
+
+    expect(cancelled).toBe(true);
+  });
+
   it("throws on a streamed error event", async () => {
     mockFetch(() => ({
       ok: true,
