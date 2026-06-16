@@ -78,6 +78,12 @@ export function completionFor(
   if (request.signal !== undefined) {
     completion.signal = request.signal;
   }
+  // Carry the response schema through (used by the ensemble strategy, where every
+  // participant answers under the same schema; consensus/pipeline reject it at the
+  // registry, so it's only ever set here for ensemble).
+  if (request.responseFormat !== undefined) {
+    completion.responseFormat = request.responseFormat;
+  }
   return completion;
 }
 

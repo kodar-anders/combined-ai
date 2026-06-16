@@ -42,6 +42,8 @@ export type {
   CombineResult,
   CombineUsage,
   ConsensusResult,
+  EnsembleAgreement,
+  EnsembleResult,
   ParticipantOutcome,
   PipelineResult,
   StrategyName,
