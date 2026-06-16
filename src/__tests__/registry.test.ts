@@ -146,4 +146,67 @@ describe("ProviderRegistry.combine", () => {
       }),
     ).rejects.toThrow(/Unknown combine strategy/);
   });
+
+  it("throws when the ensemble strategy is given no responseFormat", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        strategy: "ensemble",
+      }),
+    ).rejects.toThrow(/ensemble.*requires a responseFormat/);
+  });
+
+  it("rejects responseFormat on a non-ensemble strategy", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+    const responseFormat = {
+      type: "json_schema" as const,
+      schema: { type: "object", additionalProperties: false },
+    };
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        strategy: "consensus",
+        responseFormat,
+      }),
+    ).rejects.toThrow(/only supported by the "ensemble" strategy/);
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        strategy: "pipeline",
+        responseFormat,
+      }),
+    ).rejects.toThrow(/only supported by the "ensemble" strategy/);
+  });
+
+  it("rejects a non-object-root schema for the ensemble strategy", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        strategy: "ensemble",
+        responseFormat: {
+          type: "json_schema",
+          schema: { type: "array", items: { type: "string" } },
+        },
+      }),
+    ).rejects.toThrow(/requires an object schema/);
+  });
 });

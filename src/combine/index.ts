@@ -13,7 +13,7 @@ import {
 } from "../types";
 
 /** The cooperation strategies the registry knows how to run. */
-export const STRATEGY_NAMES = ["consensus", "pipeline"] as const;
+export const STRATEGY_NAMES = ["consensus", "pipeline", "ensemble"] as const;
 
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
 
@@ -102,17 +102,54 @@ export type PipelineResult = {
 };
 
 /**
+ * How strongly the ensemble participants agreed on the merged object — the
+ * confidence signal a multi-model vote gives you that a single model can't.
+ */
+export type EnsembleAgreement = {
+  /** Mean of the per-field agreement scores (0–1), or 1 for an empty object. */
+  overall: number;
+  /**
+   * Per-field agreement: the fraction of the merged responses that voted for the
+   * field's merged value (0–1). The denominator is **all** the valid responses,
+   * not just the ones that returned the field — so a field most models omitted
+   * scores low. 1 means every model returned the field and agreed on its value; a
+   * low value flags either disagreement or sparse coverage.
+   */
+  byField: Record<string, number>;
+};
+
+/**
+ * The result of the `ensemble` strategy (each participant returns the same typed
+ * object; the objects are merged field-wise by majority vote — with no LLM
+ * synthesis — so every merged value is one a model actually returned).
+ */
+export type EnsembleResult = {
+  /** The merged object serialized as JSON (the same content as `merged`). */
+  text: string;
+  strategy: "ensemble";
+  /** The merged typed object. Cast to your schema's type. */
+  merged: Record<string, unknown>;
+  /** How strongly the participants agreed, overall and per field. */
+  agreement: EnsembleAgreement;
+  /** Each participant's structured response, in participant order (includes failures). */
+  responses: ParticipantOutcome[];
+  /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
+  usage?: CombineUsage;
+};
+
+/**
  * The result of a combine, discriminated on `strategy`. Narrow on
  * `result.strategy` to reach the strategy-specific artifacts.
  */
-export type CombineResult = ConsensusResult | PipelineResult;
+export type CombineResult = ConsensusResult | PipelineResult | EnsembleResult;
 
 /**
  * A progress event emitted while a combine runs. For `consensus`, `phase` marks
  * a phase boundary and `draft`/`critique` fire as each participant's call settles
  * (in completion order, which may differ from participant order). For `pipeline`,
- * a `stage` event fires as each stage settles (in conveyor order). The final
- * answer is the resolved {@link CombineResult}, so there is no terminal event.
+ * a `stage` event fires as each stage settles (in conveyor order). For `ensemble`,
+ * a `response` event fires as each participant's structured answer settles. The
+ * final answer is the resolved {@link CombineResult}, so there is no terminal event.
  */
 export type CombineEvent =
   | { type: "phase"; phase: "drafting" | "critiquing" | "synthesizing" }
@@ -124,7 +161,8 @@ export type CombineEvent =
       provider: ProviderName;
       status: "ok" | "failed";
       index: number;
-    };
+    }
+  | { type: "response"; provider: ProviderName; status: "ok" | "failed" };
 
 export type CombineOptions = {
   /**

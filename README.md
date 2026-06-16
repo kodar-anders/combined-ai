@@ -11,8 +11,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
 > **Status: early.** The core abstraction and three providers (Anthropic /
 > Claude, OpenAI, and Google Gemini) are in place, with completion and streaming,
 > plus a registry to select a provider by name. Multi-provider combination has
-> landed with two strategies, **consensus** and **pipeline** — see
-> [Combining providers](#combining-providers) and [Roadmap](#roadmap).
+> landed with three strategies, **consensus**, **pipeline**, and **ensemble** —
+> see [Combining providers](#combining-providers) and [Roadmap](#roadmap).
 
 ## Contents
 
@@ -27,6 +27,7 @@ today, and is being built toward **combining multiple providers on one prompt**.
   - [Combining providers](#combining-providers)
     - [Consensus](#consensus)
     - [Pipeline](#pipeline)
+    - [Ensemble](#ensemble)
   - [Combine progress events](#combine-progress-events)
   - [Request options](#request-options)
 - [Public API](#public-api)
@@ -56,8 +57,10 @@ today, and is being built toward **combining multiple providers on one prompt**.
   per-participant + total `usage` on a `combine()` result so you can see the
   several-times-one-call cost of a combine.
 - `registry.combine()` — make several providers **cooperate** on one prompt
-  using a strategy: **consensus** (draft → critique → synthesize) or **pipeline**
-  (a conveyor belt of providers refining one answer in sequence).
+  using a strategy: **consensus** (draft → critique → synthesize), **pipeline**
+  (a conveyor belt of providers refining one answer in sequence), or **ensemble**
+  (every model answers under one JSON Schema, then a mechanical field-wise vote
+  with an agreement score — multi-model structured extraction with confidence).
 - Dual ESM + CJS package with TypeScript types.
 
 ## Requirements
@@ -371,6 +374,64 @@ Behavior notes:
   sanitize pass) into a `total` and a per-participant `byParticipant` breakdown —
   `undefined` if no provider reported usage.
 
+#### Ensemble
+
+A multi-model vote on **structured output**. Every participant answers the prompt
+independently under the same JSON Schema (`responseFormat`, required for this
+strategy), then the typed objects are merged **mechanically** — no model
+adjudicates — and you get an **agreement score** telling you how strongly the
+models concurred. This is the thing a single provider can't give you: extraction
+and classification with built-in confidence.
+
+```ts
+const result = await registry.combine({
+  messages: [{ role: "user", content: "Extract the city and country: ..." }],
+  participants: ["anthropic", "openai", "gemini"],
+  strategy: "ensemble",
+  responseFormat: {
+    type: "json_schema",
+    schema: {
+      type: "object",
+      properties: { city: { type: "string" }, country: { type: "string" } },
+      required: ["city", "country"],
+      additionalProperties: false,
+    },
+  },
+});
+
+console.log(result.merged); // e.g. { city: "Paris", country: "France" }
+console.log(result.agreement.overall); // 0–1: how much the models agreed overall
+console.log(result.agreement.byField); // e.g. { city: 1, country: 0.67 }
+console.log(result.responses); // each participant's structured answer (ok/failed)
+```
+
+Merge policy (field-wise over the union of top-level keys):
+
+- **every field → majority vote**: the most common value by deep equality, ties
+  broken by participant order. The merged value is always one a model actually
+  returned — never a synthesized or averaged value — so it stays within the
+  schema's types and `agreement` describes the exact value you get back.
+- **agreement** per field is the share of **all** the valid responses that voted
+  for the merged value; `overall` is the mean across fields. Because the
+  denominator is every response (not just the ones that returned the field), a
+  field most models omitted scores low — a low score flags a field (disagreement
+  or sparse coverage) to route for review.
+
+Behavior notes:
+
+- **`responseFormat` is required** for ensemble and **rejected** for
+  consensus/pipeline (where it has no meaning and would be silently ignored). Its
+  schema must have an **object** root (the field-wise vote needs named fields); an
+  array- or scalar-root schema is rejected up front with a clear error.
+- **Failures and invalid responses are dropped from the vote** but still recorded
+  in `result.responses`: a provider that errored, returned non-JSON, or didn't
+  return an object doesn't count. The run throws only if **no** participant
+  returns a valid object.
+- **The merge is shallow** — nested objects/arrays are voted on as whole values,
+  not merged recursively. Keep schemas to flat fields for the most useful
+  per-field agreement.
+- **Token usage is aggregated** into `result.usage`, as with the other strategies.
+
 ### Combine progress events
 
 `combine()` takes an optional second argument (`CombineOptions`) with an
@@ -575,8 +636,8 @@ Exported from the package entry point:
   type — see [Error handling](#error-handling).
 - `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).
 - Combine types: `CombineRequest`, `CombineResult` (= `ConsensusResult` |
-  `PipelineResult`), `CombineUsage`, `ParticipantOutcome`, `StrategyName`,
-  `CombineOptions`, `CombineEvent`.
+  `PipelineResult` | `EnsembleResult`), `EnsembleAgreement`, `CombineUsage`,
+  `ParticipantOutcome`, `StrategyName`, `CombineOptions`, `CombineEvent`.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GeminiProvider`) are **not** exported — they are constructed internally by the

@@ -24,6 +24,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   `CompletionResult.parsed` (`undefined` when no schema was requested or the
   output wasn't valid JSON). For one schema to work across all three, set
   `additionalProperties: false` and list every property in `required`.
+- Third combine strategy, **ensemble** (`strategy: "ensemble"`) — every
+  participant answers the prompt under the same `responseFormat` (JSON Schema),
+  then the typed objects are merged **mechanically** (no LLM synthesis) by
+  field-wise **majority vote** (most common value by deep equality, first-seen
+  tie-break), with a per-field and overall **agreement** score. The merged value
+  is always one a model actually returned (never synthesized), and the agreement
+  denominator is all valid responses, so a field most models omitted scores low.
+  The result (`EnsembleResult`, exported with `EnsembleAgreement`) carries
+  `merged`, `agreement`, and each participant's `responses`. `responseFormat` is
+  **required** for ensemble (its schema must have an object root — array/scalar
+  roots are rejected with a clear error) and **rejected** for consensus/pipeline
+  (it would otherwise be silently ignored). A `response` progress event fires as
+  each participant settles.
 - Multimodal input: `ContentPart` is `TextPart | ImagePart | FilePart` (all
   exported, plus `MediaSource`). Pass images (`{ type: "image", source }`) and
   documents/PDFs (`{ type: "file", source, filename? }`) alongside text, where

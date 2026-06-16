@@ -14,6 +14,7 @@ import {
   STRATEGY_NAMES,
 } from "./combine";
 import { consensus } from "./combine/consensus";
+import { ensemble } from "./combine/ensemble";
 import { pipeline } from "./combine/pipeline";
 import {
   AnthropicProvider,
@@ -68,11 +69,13 @@ export class ProviderRegistry {
 
   /**
    * Combine several configured providers to cooperate on one prompt using a
-   * cooperation strategy — `consensus` (draft → critique → synthesize) or
-   * `pipeline` (sequential refinement). Participants are picked by name and
-   * validated like {@link ProviderRegistry.select}. Strategy-specific options
-   * (`synthesizer`, `minParticipants`, `attribution`) are validated and applied
-   * only by the strategy that uses them.
+   * cooperation strategy — `consensus` (draft → critique → synthesize),
+   * `pipeline` (sequential refinement), or `ensemble` (each participant answers
+   * under a shared JSON Schema, then the typed objects are merged field-wise with
+   * an agreement score; requires `responseFormat`). Participants are picked by
+   * name and validated like {@link ProviderRegistry.select}. Strategy-specific
+   * options (`synthesizer`, `minParticipants`, `attribution`, `responseFormat`)
+   * are validated and applied only by the strategy that uses them.
    */
   async combine(
     request: CombineRequest,
@@ -106,6 +109,14 @@ export class ProviderRegistry {
     }));
 
     const strategy = request.strategy ?? "consensus";
+    // `responseFormat` only means something for the ensemble strategy (where every
+    // participant answers under the schema). For the prose strategies it would be
+    // silently ignored, so reject it loudly instead.
+    if (strategy !== "ensemble" && request.responseFormat !== undefined) {
+      throw new Error(
+        `responseFormat is only supported by the "ensemble" strategy, not "${strategy}".`,
+      );
+    }
     switch (strategy) {
       // `synthesizer`/`minParticipants` are consensus-only, so they're validated
       // here (not in the shared preamble) — pipeline ignores them entirely.
@@ -116,6 +127,23 @@ export class ProviderRegistry {
       }
       case "pipeline":
         return pipeline(roster, request, options?.onEvent);
+      case "ensemble": {
+        if (request.responseFormat === undefined) {
+          throw new Error(
+            'The "ensemble" strategy requires a responseFormat (the JSON Schema every participant answers under).',
+          );
+        }
+        // The field-wise merge needs named fields, so the schema's root must be an
+        // object. Reject array/scalar roots up front with a clear error rather than
+        // failing opaquely after paying for every participant's call.
+        const rootType = request.responseFormat.schema.type;
+        if (typeof rootType === "string" && rootType !== "object") {
+          throw new Error(
+            `The "ensemble" strategy requires an object schema (its field-wise vote needs named fields); got a "${rootType}" schema.`,
+          );
+        }
+        return ensemble(roster, request, options?.onEvent);
+      }
       default: {
         const unreachable: never = strategy;
         throw new Error(`Unhandled combine strategy "${String(unreachable)}"`);
