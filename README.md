@@ -122,8 +122,14 @@ unless a participant overrides them — plus:
 | `minParticipants` | `number`                                                       | _Consensus only._ Minimum drafts required to proceed (default 2).                          |
 | `responseFormat`  | `ResponseFormat`                                               | _Ensemble only (required there)._ The shared JSON Schema every model answers under.        |
 
-The result is a `CombineResult` **discriminated on `strategy`** — narrow on
-`result.strategy` to reach strategy-specific fields. See
+**Two ways to call it.** When you know the strategy at the call site, prefer the
+per-strategy method — `registry.consensus(req)`, `.pipeline(req)`,
+`.ensemble(req)`, `.broadcast(req)` — each takes that strategy's request type and
+returns its **concrete** result (`ConsensusResult`, `PipelineResult`, …), so you
+never narrow a union. `registry.combine(request)` is the dispatcher and is generic over the strategy:
+pass a literal `strategy` and it returns that strategy's concrete result; pass a
+`strategy` only known at runtime and it returns the full `CombineResult` union to
+narrow. The two share one engine and the same validation. See
 [Reading the result](#reading-the-result).
 
 ### Consensus
@@ -298,13 +304,26 @@ request-wide values.
 
 ### Reading the result
 
-`combine()` returns a `CombineResult` discriminated on `strategy`. Every outcome
-carries both an `id` (the participant label) and `provider` (the actual provider
-it ran on); `usage` is aggregated across **every** model call the run made (the
-true multi-call cost), keyed by `id`.
+Every outcome carries both an `id` (the participant label) and `provider` (the
+actual provider it ran on); `usage` is aggregated across **every** model call the
+run made (the true multi-call cost), keyed by `id`.
+
+If you call a per-strategy method, the result type is already concrete — no
+narrowing:
 
 ```ts
-const result = await registry.combine({ messages, participants });
+const result = await registry.pipeline({ messages, participants });
+result.finalParticipant; // typed PipelineResult — `stages`, `text`, … all in scope
+```
+
+`combine()` with a **literal** `strategy` is just as precise (it's generic over
+the strategy, inferring the result type from `strategy`). You only narrow when the
+strategy is dynamic, in which case `combine()` returns the `CombineResult` union
+discriminated on `strategy`:
+
+```ts
+const strategy = pickStrategyAtRuntime(); // : StrategyName
+const result = await registry.combine({ messages, participants, strategy });
 
 result.usage; // { total, byParticipant } — aggregated token usage, or undefined
 
@@ -693,7 +712,9 @@ await provider.complete({ messages, signal: AbortSignal.timeout(30_000) });
 
 Exported from the package entry point:
 
-- `ProviderRegistry` — the single entry point (`select()` and `combine()`).
+- `ProviderRegistry` — the single entry point: `select()`, the strategy
+  dispatcher `combine()`, and the per-strategy methods `consensus()`,
+  `pipeline()`, `ensemble()`, `broadcast()`.
 - Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
   `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GoogleProviderOptions`,
@@ -702,10 +723,14 @@ Exported from the package entry point:
   `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,
   `CompletionRequest`, `CompletionResult`, `ResponseFormat`, `ToolDefinition`,
   `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`.
-- Combine types: `CombineRequest`, `ParticipantSpec`, `CombineResult` (=
-  `ConsensusResult` | `PipelineResult` | `EnsembleResult` | `BroadcastResult`),
-  `EnsembleAgreement`, `CombineUsage`, `ParticipantOutcome`, `StrategyName`,
-  `CombineOptions`, `CombineEvent`.
+- Combine request types: `CombineRequest` (the dispatcher's broad type),
+  `CombineRequestBase`, and the per-strategy `ConsensusRequest`,
+  `PipelineRequest`, `EnsembleRequest` (`responseFormat` required),
+  `BroadcastRequest`; plus `ParticipantSpec`.
+- Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
+  `EnsembleResult` | `BroadcastResult`), `EnsembleAgreement`, `CombineUsage`,
+  `ParticipantOutcome`, `StrategyName`, `CombineOptions`, `CombineEvent`, and the
+  strategy-generic utilities `StrategyRequest<S>` / `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,

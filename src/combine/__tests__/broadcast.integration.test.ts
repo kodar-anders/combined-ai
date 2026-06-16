@@ -65,13 +65,8 @@ describeLive("ProviderRegistry.combine broadcast (live)", () => {
         },
       );
 
-      // `combine()` returns a strategy-discriminated union; narrow to broadcast.
-      if (result.strategy !== "broadcast") {
-        throw new Error(
-          `expected a broadcast result, got "${result.strategy}"`,
-        );
-      }
-
+      // `combine({ strategy: "broadcast" })` returns a typed `BroadcastResult`
+      // (no union narrowing needed) — `result.responses` is in scope.
       for (const response of result.responses) {
         if (response.status === "failed") {
           console.log(`FAILED ${response.provider}: ${response.error.message}`);
