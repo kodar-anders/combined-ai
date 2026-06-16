@@ -209,4 +209,31 @@ describe("ProviderRegistry.combine", () => {
       }),
     ).rejects.toThrow(/requires an object schema/);
   });
+
+  it("rejects tools/toolChoice — combine does not do tool calling", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+    const tool = {
+      name: "get_weather",
+      parameters: { type: "object", additionalProperties: false },
+    };
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        tools: [tool],
+      }),
+    ).rejects.toThrow(/does not support tool calling/);
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        toolChoice: "auto",
+      }),
+    ).rejects.toThrow(/does not support tool calling/);
+  });
 });

@@ -28,6 +28,17 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+const WEATHER_TOOL = {
+  name: "get_weather",
+  description: "Get the weather for a city.",
+  parameters: {
+    type: "object",
+    properties: { city: { type: "string" } },
+    required: ["city"],
+    additionalProperties: false,
+  },
+};
+
 describe("OpenAIProvider.complete", () => {
   it("sends the correct request and returns the message content", async () => {
     const fetchMock = mockFetch(() => ({
@@ -244,6 +255,159 @@ describe("OpenAIProvider.complete", () => {
     });
   });
 
+  it("sends tools and maps toolChoice 'any' to 'required'", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Weather in Paris?" }],
+      tools: [WEATHER_TOOL],
+      toolChoice: "any",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([
+      {
+        type: "function",
+        function: {
+          name: "get_weather",
+          description: "Get the weather for a city.",
+          parameters: WEATHER_TOOL.parameters,
+        },
+      },
+    ]);
+    expect(body.tool_choice).toBe("required");
+  });
+
+  it("extracts tool_calls and parses the arguments string", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    type: "function",
+                    function: {
+                      name: "get_weather",
+                      arguments: '{"city":"Paris"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Weather?" }],
+      tools: [WEATHER_TOOL],
+    });
+
+    expect(result.finishReason).toBe("tool_use");
+    expect(result.toolCalls).toEqual([
+      { id: "call_1", name: "get_weather", input: { city: "Paris" } },
+    ]);
+  });
+
+  it("maps tool_use to an assistant tool_calls message and tool_result to a tool message", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        { role: "user", content: "Weather?" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "call_1",
+              name: "get_weather",
+              input: { city: "Paris" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", toolUseId: "call_1", content: "Sunny" },
+          ],
+        },
+      ],
+      tools: [WEATHER_TOOL],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages).toEqual([
+      { role: "user", content: "Weather?" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "get_weather", arguments: '{"city":"Paris"}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "Sunny" },
+    ]);
+  });
+
+  it("throws a clear error when a tool call or result lacks an id (OpenAI requires it)", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "gpt-4.1", choices: [] }),
+    }));
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+
+    await expect(
+      provider.complete({
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                name: "get_weather",
+                input: { city: "Paris" },
+              },
+            ],
+          },
+        ],
+      }),
+    ).rejects.toThrow(/requires an id on each tool call/);
+
+    await expect(
+      provider.complete({
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "tool_result", content: "Sunny" }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(/requires toolUseId/);
+  });
+
   it("forwards an abort signal to fetch", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
@@ -443,6 +607,28 @@ describe("OpenAIProvider.stream", () => {
     }
 
     expect(deltas).toEqual(["Hello", " world"]);
+  });
+
+  it("stops at the [DONE] sentinel and ignores anything after it", async () => {
+    mockFetch(() => ({
+      ok: true,
+      body: sseStream([
+        'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+        "data: [DONE]\n\n",
+        // A misbehaving server could keep sending after [DONE]; it must be ignored.
+        'data: {"choices":[{"delta":{"content":" extra"}}]}\n\n',
+      ]),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const deltas: string[] = [];
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toEqual(["Hello"]);
   });
 
   it("releases the reader when the consumer breaks early", async () => {

@@ -45,6 +45,8 @@ today, and is being built toward **combining multiple providers on one prompt**.
   alongside text, as base64 bytes or a URL, mapped to each provider's wire format.
 - Structured output — constrain a response to a JSON Schema (`responseFormat`);
   the parsed object comes back on `result.parsed`. Plain JSON Schema, no Zod.
+- Tool / function calling — declare `tools`, get back `result.toolCalls`, run
+  them, and feed results back through the conversation, all behind one interface.
 - **Anthropic (Claude)**, **OpenAI**, and **Google Gemini** providers, talking
   to their HTTP APIs directly over the global `fetch` — no SDK dependency.
 - `ProviderRegistry` — a single point of access: configure your providers, then
@@ -484,14 +486,16 @@ is no terminal event (the result is the return value), and errors thrown from
 
 Both `complete()` and `stream()` take a `CompletionRequest`:
 
-| Field            | Type             | Notes                                                                                          |
-| ---------------- | ---------------- | ---------------------------------------------------------------------------------------------- |
-| `messages`       | `Message[]`      | Required. `{ role: "user" \| "assistant"; content: string \| ContentPart[] }`                  |
-| `system`         | `string`         | Optional system prompt.                                                                        |
-| `model`          | `string`         | Optional per-request model override.                                                           |
-| `maxTokens`      | `number`         | Optional output cap (defaults: 16000 complete / 64000 stream).                                 |
-| `responseFormat` | `ResponseFormat` | Optional. Constrain the output to a JSON Schema — see [Structured output](#structured-output). |
-| `signal`         | `AbortSignal`    | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                 |
+| Field            | Type               | Notes                                                                                          |
+| ---------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
+| `messages`       | `Message[]`        | Required. `{ role: "user" \| "assistant"; content: string \| ContentPart[] }`                  |
+| `system`         | `string`           | Optional system prompt.                                                                        |
+| `model`          | `string`           | Optional per-request model override.                                                           |
+| `maxTokens`      | `number`           | Optional output cap (defaults: 16000 complete / 64000 stream).                                 |
+| `responseFormat` | `ResponseFormat`   | Optional. Constrain the output to a JSON Schema — see [Structured output](#structured-output). |
+| `tools`          | `ToolDefinition[]` | Optional. Tools the model may call — see [Tool calling](#tool-calling).                        |
+| `toolChoice`     | `ToolChoice`       | Optional. `"auto" \| "any" \| "none" \| { name }` — whether/which tool the model must call.    |
+| `signal`         | `AbortSignal`      | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                 |
 
 > **Message content:** `content` accepts a plain `string` (shorthand for a single
 > text part) or a `ContentPart[]` for multimodal input. A `ContentPart` is a
@@ -563,6 +567,7 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
 | `refusal`         | `string`       | The refusal message when the model declined (currently OpenAI's `message.refusal`).                         |
 | `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`), or `undefined` if none reported.                  |
 | `parsed`          | `unknown`      | The parsed structured output when `responseFormat` was given — see [Structured output](#structured-output). |
+| `toolCalls`       | `ToolCall[]`   | The tool calls the model requested, when it called any — see [Tool calling](#tool-calling).                 |
 
 `FinishReason` is a provider-agnostic union mapped from each provider's field
 (Anthropic `stop_reason`, OpenAI `finish_reason`, Gemini `finishReason`):
@@ -573,6 +578,8 @@ Both `complete()` and `stream()` take a `CompletionRequest`:
   thinking tokens.
 - `"content_filter"` — the model refused or output was blocked by a safety
   filter. When `refusal` is set, `finishReason` is always this.
+- `"tool_use"` — the model stopped to call a tool; see `toolCalls` and
+  [Tool calling](#tool-calling).
 - `"other"` — any other or unrecognized reason.
 
 This lets you tell a truncated/refused answer apart from a genuinely empty one
@@ -622,6 +629,71 @@ properties in `required`; Gemini wants `nullable: true` rather than a
 `$ref`, and numeric/length constraints. `responseFormat` also applies to
 `stream()` (the streamed `text` is JSON), but only `complete()` surfaces `parsed`.
 
+### Tool calling
+
+Declare `tools` and the model can ask to call them. When it does, `complete()`
+returns `result.toolCalls` (and `result.finishReason === "tool_use"`); you run the
+tools and feed the results back by appending the tool call and its result to the
+conversation, then call again. You own the loop — this low-level protocol keeps
+you in control of when and how tools run.
+
+```ts
+const provider = registry.select("anthropic");
+const tools = [
+  {
+    name: "get_weather",
+    description: "Get the current weather for a city.",
+    parameters: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+      additionalProperties: false,
+    },
+  },
+];
+
+const messages = [{ role: "user", content: "What's the weather in Paris?" }];
+
+const first = await provider.complete({ messages, tools });
+
+if (first.toolCalls) {
+  // 1. Replay the model's tool-call turn, then 2. the results you computed.
+  messages.push({
+    role: "assistant",
+    content: first.toolCalls.map((call) => ({ type: "tool_use", ...call })),
+  });
+  messages.push({
+    role: "user",
+    content: first.toolCalls.map((call) => ({
+      type: "tool_result",
+      toolUseId: call.id,
+      name: call.name, // needed for Gemini, which matches results by name
+      content: runTool(call.name, call.input), // your code; returns a string
+    })),
+  });
+
+  const final = await provider.complete({ messages, tools });
+  console.log(final.text);
+}
+```
+
+Notes:
+
+- **`toolChoice`** controls whether the model may, must, or must-not call a tool:
+  `"auto"` (default), `"any"` (force some tool), `"none"`, or `{ name }` (force a
+  specific one).
+- **`input` is always a parsed object** — OpenAI's JSON-string arguments are parsed
+  for you; Anthropic and Gemini already return objects.
+- **Feed results back as content parts**: a `ToolUsePart` in an assistant message
+  and a `ToolResultPart` in a user message. Each provider maps these to its own
+  wire shape (OpenAI, for instance, turns the tool result into a separate
+  `tool`-role message). Set both `toolUseId` and `name` on the result for
+  portability — OpenAI matches the call by id (and throws if it's missing),
+  Gemini matches by name (and throws if it's missing).
+- **`complete()`-only**: `stream()` yields text deltas and does not surface tool
+  calls. Tool calling is also intentionally **not** part of `combine()` (a
+  multi-model tool loop has no coherent shared state) — use `select()` for it.
+
 ## Public API
 
 Exported from the package entry point:
@@ -630,8 +702,9 @@ Exported from the package entry point:
 - Config types: `ProviderRegistryConfig`, `ProviderName`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `ContentPart`, `TextPart`,
-  `ImagePart`, `FilePart`, `MediaSource`, `CompletionRequest`, `CompletionResult`,
-  `ResponseFormat`, `FinishReason`, `Usage`.
+  `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,
+  `CompletionRequest`, `CompletionResult`, `ResponseFormat`, `ToolDefinition`,
+  `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`.
 - `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
   type — see [Error handling](#error-handling).
 - `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).

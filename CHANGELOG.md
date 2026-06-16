@@ -11,6 +11,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 - Core, provider-agnostic contract in `src/types.ts`: `Provider`, `Message`,
   `Role`, `CompletionRequest`, `CompletionResult`.
+- Tool / function calling (single-provider, `complete()`). Pass `tools` (a
+  `ToolDefinition[]` of `{ name, description?, parameters }`, where `parameters`
+  is a JSON Schema) and an optional `toolChoice`
+  (`"auto" | "any" | "none" | { name }`); when the model calls a tool,
+  `complete()` returns `toolCalls` (a `ToolCall[]` of `{ id?, name, input }`, with
+  OpenAI's JSON-string arguments parsed for you) and `finishReason: "tool_use"` (a
+  new `FinishReason` member). Feed results back by replaying the conversation with
+  the new `ToolUsePart` (assistant) and `ToolResultPart` (user) content parts;
+  each provider maps them to its own wire shape (Anthropic `tool_use`/`tool_result`
+  blocks, OpenAI assistant `tool_calls` and separate `tool`-role messages, Gemini
+  `functionCall`/`functionResponse` parts). The caller orchestrates the loop; tool
+  calls are surfaced by `complete()` only (not `stream()`), and tool calling is
+  intentionally not part of `combine()`. All new types (`ToolDefinition`,
+  `ToolChoice`, `ToolCall`, `ToolUsePart`, `ToolResultPart`) are exported.
 - Structured message content: `Message.content` is now `string | ContentPart[]`.
   A bare `string` is shorthand for a single text part, so existing callers are
   unchanged; pass `ContentPart[]` for structured content. The `Message` widening

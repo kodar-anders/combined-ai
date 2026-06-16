@@ -4,6 +4,8 @@
  */
 
 import { apiError, apiErrorFromBody } from "../errors";
+import { extractModel, isRecord } from "./extract";
+import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
@@ -14,6 +16,8 @@ import {
   type MediaSource,
   type Message,
   type Provider,
+  type ToolCall,
+  type ToolChoice,
   type Usage,
 } from "../types";
 
@@ -74,13 +78,23 @@ export class GeminiProvider implements Provider {
     }
     const rawFinishReason = extractFinishReason(data);
     const text = extractText(data);
+    const toolCalls = extractToolCalls(data);
+    const finishReason = normalizeFinishReason(rawFinishReason);
     return {
       text,
-      model: extractModel(data, model),
-      finishReason: normalizeFinishReason(rawFinishReason),
+      model: extractModel(data, model, "modelVersion"),
+      // Gemini reports `STOP` even when it emits a function call, so surface
+      // `tool_use` — but only on a clean stop. A real `MAX_TOKENS`/`SAFETY` stop
+      // (e.g. truncated args) must not be masked, so keep its normalized reason.
+      finishReason:
+        toolCalls !== undefined &&
+        (finishReason === "stop" || finishReason === undefined)
+          ? "tool_use"
+          : finishReason,
       rawFinishReason,
       usage: extractUsage(data),
       parsed: parseStructured(request, text),
+      toolCalls,
     };
   }
 
@@ -109,54 +123,14 @@ export class GeminiProvider implements Provider {
       throw new Error("Gemini streaming response had no body");
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      let result = await reader.read();
-      while (!result.done) {
-        buffer += decoder.decode(result.value as Uint8Array, { stream: true });
-
-        for (
-          let nl = buffer.indexOf("\n");
-          nl !== -1;
-          nl = buffer.indexOf("\n")
-        ) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-
-          if (!line.startsWith("data:")) {
-            continue;
-          }
-          const payload = line.slice("data:".length).trim();
-          if (payload === "") {
-            continue;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-          if (!isRecord(parsed)) {
-            continue;
-          }
-
-          if (isRecord(parsed.error)) {
-            throw new Error(`Gemini stream error: ${payload}`);
-          }
-
-          const text = extractText(parsed);
-          if (text.length > 0) {
-            yield text;
-          }
-        }
-
-        result = await reader.read();
+    for await (const event of sseJson(response.body)) {
+      if (isRecord(event.error)) {
+        throw new Error(`Gemini stream error: ${JSON.stringify(event)}`);
       }
-    } finally {
-      await reader.cancel();
+      const text = extractText(event);
+      if (text.length > 0) {
+        yield text;
+      }
     }
   }
 
@@ -199,8 +173,40 @@ export class GeminiProvider implements Provider {
     if (request.system !== undefined) {
       body.systemInstruction = { parts: [{ text: request.system }] };
     }
+    if (request.tools !== undefined) {
+      // Tool parameter schemas need the same OpenAPI-3-subset transform as
+      // structured output (UPPERCASE types).
+      body.tools = [
+        {
+          functionDeclarations: request.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: toGeminiSchema(tool.parameters),
+          })),
+        },
+      ];
+    }
+    if (request.toolChoice !== undefined) {
+      body.toolConfig = {
+        functionCallingConfig: toGeminiFunctionCallingConfig(
+          request.toolChoice,
+        ),
+      };
+    }
     return body;
   }
+}
+
+/** Map the provider-agnostic tool choice onto Gemini's `functionCallingConfig`. */
+function toGeminiFunctionCallingConfig(
+  choice: ToolChoice,
+): Record<string, unknown> {
+  if (typeof choice === "object") {
+    // Force this one tool: ANY mode restricted to its name.
+    return { mode: "ANY", allowedFunctionNames: [choice.name] };
+  }
+  const mode = { auto: "AUTO", any: "ANY", none: "NONE" }[choice];
+  return { mode };
 }
 
 /**
@@ -247,7 +253,21 @@ function toGeminiSchema(schema: unknown): unknown {
 type GeminiPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
-  | { fileData: { mimeType?: string; fileUri: string } };
+  | { fileData: { mimeType?: string; fileUri: string } }
+  | {
+      functionCall: {
+        name: string;
+        id?: string;
+        args: Record<string, unknown>;
+      };
+    }
+  | {
+      functionResponse: {
+        name?: string;
+        id?: string;
+        response: Record<string, unknown>;
+      };
+    };
 
 /**
  * Gemini names the assistant role `model` and carries content inside a `parts`
@@ -275,6 +295,30 @@ function toGeminiPart(part: ContentPart): GeminiPart {
     case "image":
     case "file":
       return toGeminiMedia(part.source);
+    case "tool_use":
+      return {
+        functionCall: {
+          name: part.name,
+          ...(part.id === undefined ? {} : { id: part.id }),
+          args: part.input,
+        },
+      };
+    case "tool_result":
+      // Gemini correlates a result to its call by function name, so name is
+      // required here (unlike Anthropic/OpenAI, which match by id).
+      if (part.name === undefined) {
+        throw new Error(
+          "Gemini requires the tool name on each tool result; set ToolResultPart.name to the called tool's name.",
+        );
+      }
+      // Gemini's functionResponse.response is an object; wrap the text output.
+      return {
+        functionResponse: {
+          name: part.name,
+          ...(part.toolUseId === undefined ? {} : { id: part.toolUseId }),
+          response: { result: part.content },
+        },
+      };
   }
 }
 
@@ -297,21 +341,26 @@ function toGeminiMedia(source: MediaSource): GeminiPart {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function toArray(value: unknown): unknown[] {
   return Array.isArray(value) ? (value as unknown[]) : [];
 }
 
-function extractText(data: unknown): string {
+/** The first candidate of a response (`candidates[0]`), or `undefined`. */
+function firstCandidate(data: unknown): Record<string, unknown> | undefined {
   const candidates = isRecord(data) ? toArray(data.candidates) : [];
   const first = candidates[0];
-  const content = isRecord(first) ? first.content : undefined;
-  const parts = isRecord(content) ? toArray(content.parts) : [];
+  return isRecord(first) ? first : undefined;
+}
+
+/** The parts of the first candidate's content (`candidates[0].content.parts`). */
+function firstCandidateParts(data: unknown): unknown[] {
+  const content = firstCandidate(data)?.content;
+  return isRecord(content) ? toArray(content.parts) : [];
+}
+
+function extractText(data: unknown): string {
   let text = "";
-  for (const part of parts) {
+  for (const part of firstCandidateParts(data)) {
     if (isRecord(part) && typeof part.text === "string") {
       text += part.text;
     }
@@ -319,11 +368,21 @@ function extractText(data: unknown): string {
   return text;
 }
 
-function extractModel(data: unknown, fallback: string): string {
-  if (isRecord(data) && typeof data.modelVersion === "string") {
-    return data.modelVersion;
+/** Collect any `functionCall` parts as provider-agnostic tool calls. */
+function extractToolCalls(data: unknown): ToolCall[] | undefined {
+  const parts = firstCandidateParts(data);
+  const calls: ToolCall[] = [];
+  for (const part of parts) {
+    const call = isRecord(part) ? part.functionCall : undefined;
+    if (isRecord(call) && typeof call.name === "string") {
+      calls.push({
+        id: typeof call.id === "string" ? call.id : undefined,
+        name: call.name,
+        input: isRecord(call.args) ? call.args : {},
+      });
+    }
   }
-  return fallback;
+  return calls.length > 0 ? calls : undefined;
 }
 
 /**
@@ -331,9 +390,8 @@ function extractModel(data: unknown, fallback: string): string {
  * was blocked there are no candidates, so fall back to `promptFeedback.blockReason`.
  */
 function extractFinishReason(data: unknown): string | undefined {
-  const candidates = isRecord(data) ? toArray(data.candidates) : [];
-  const first = candidates[0];
-  if (isRecord(first) && typeof first.finishReason === "string") {
+  const first = firstCandidate(data);
+  if (first !== undefined && typeof first.finishReason === "string") {
     return first.finishReason;
   }
   const feedback = isRecord(data) ? data.promptFeedback : undefined;

@@ -32,16 +32,53 @@ export type FilePart = {
 };
 
 /**
- * One part of a structured message content: text, an image, or a file/document.
- * Tool parts will add members to this union in a later step — that is
- * **additive** and non-breaking; the one breaking change was widening
- * {@link Message.content} from `string` to `string | ContentPart[]`.
+ * A tool call the model made, as it appears in an **assistant** message's content
+ * when you replay the conversation. Build these from the {@link ToolCall}s a prior
+ * `complete()` returned, append them as the assistant turn, then send the matching
+ * {@link ToolResultPart}s in the next user message.
+ */
+export type ToolUsePart = {
+  type: "tool_use";
+  /** The id the provider assigned to the call; echo it on the matching result. */
+  id?: string;
+  name: string;
+  /** The arguments the model passed (a parsed object). */
+  input: Record<string, unknown>;
+};
+
+/**
+ * A tool's result, placed in a **user** message's content to feed it back to the
+ * model. Carry both `toolUseId` (Anthropic/OpenAI match the call by id) and `name`
+ * (Gemini matches by function name) when you have them.
+ */
+export type ToolResultPart = {
+  type: "tool_result";
+  /** The id of the {@link ToolUsePart}/{@link ToolCall} this answers. */
+  toolUseId?: string;
+  /** The tool's name — required for Gemini, which matches results by name. */
+  name?: string;
+  /** The tool's output as text. */
+  content: string;
+  /** Mark the call as having errored (the model is told the tool failed). */
+  isError?: boolean;
+};
+
+/**
+ * One part of a structured message content: text, an image, a file/document, or a
+ * tool call / tool result (for replaying a tool-use conversation). Widening
+ * {@link Message.content} from `string` to `string | ContentPart[]` was the one
+ * breaking change; adding members here is additive.
  *
  * Provider support varies (e.g. OpenAI's Chat Completions has no URL file
  * source); each provider's content mapper handles what its API supports and
  * throws a clear error otherwise.
  */
-export type ContentPart = TextPart | ImagePart | FilePart;
+export type ContentPart =
+  | TextPart
+  | ImagePart
+  | FilePart
+  | ToolUsePart
+  | ToolResultPart;
 
 export type Message = {
   role: Role;
@@ -82,6 +119,38 @@ export type ResponseFormat = {
   name?: string;
 };
 
+/**
+ * A tool the model may call. `parameters` is a JSON Schema describing the tool's
+ * input (the same cross-provider schema guidance as {@link ResponseFormat} applies).
+ */
+export type ToolDefinition = {
+  name: string;
+  description?: string;
+  parameters: Record<string, unknown>;
+};
+
+/**
+ * How the model should use the supplied tools:
+ * - `"auto"` — the model decides whether to call a tool (the default when tools
+ *   are present);
+ * - `"any"` — the model must call some tool;
+ * - `"none"` — the model must not call a tool;
+ * - `{ name }` — the model must call that specific tool.
+ */
+export type ToolChoice = "auto" | "any" | "none" | { name: string };
+
+/**
+ * A tool call the model requested, surfaced on {@link CompletionResult.toolCalls}.
+ * `input` is the parsed arguments object (OpenAI's JSON-string arguments are
+ * parsed for you; Anthropic/Gemini already return an object).
+ */
+export type ToolCall = {
+  /** Provider-assigned id (always on Anthropic/OpenAI; newer Gemini models). */
+  id?: string;
+  name: string;
+  input: Record<string, unknown>;
+};
+
 export type CompletionRequest = {
   messages: Message[];
   /** Optional system prompt applied to the whole request. */
@@ -95,6 +164,16 @@ export type CompletionRequest = {
    * `complete()` also surfaces the parsed value on {@link CompletionResult.parsed}.
    */
   responseFormat?: ResponseFormat;
+  /**
+   * Tools the model may call. When the model calls one, `complete()` returns the
+   * calls on {@link CompletionResult.toolCalls} (and `finishReason: "tool_use"`);
+   * you run them and feed results back as {@link ToolResultPart}s in the next
+   * message. Surfaced by `complete()` only — `stream()` yields text deltas and
+   * does not report tool calls.
+   */
+  tools?: ToolDefinition[];
+  /** Constrain whether/which tool the model calls. Defaults to provider behavior (`"auto"`). */
+  toolChoice?: ToolChoice;
   /**
    * Abort the request (and, for `stream()`, the in-flight read) when this signal
    * fires. For a timeout, pass `AbortSignal.timeout(ms)`. An aborted request
@@ -112,9 +191,16 @@ export type CompletionRequest = {
  *   when the cap was spent on thinking tokens; see the Gemini note in CLAUDE.md).
  * - `"content_filter"` — the model refused or output was blocked by a safety
  *   filter.
+ * - `"tool_use"` — the model stopped to call a tool; see
+ *   {@link CompletionResult.toolCalls}.
  * - `"other"` — any other or unrecognized reason.
  */
-export type FinishReason = "stop" | "length" | "content_filter" | "other";
+export type FinishReason =
+  | "stop"
+  | "length"
+  | "content_filter"
+  | "tool_use"
+  | "other";
 
 /**
  * Token usage for a single completion. `totalTokens` is the provider's own total
@@ -153,6 +239,12 @@ export type CompletionResult = {
    * JSON is always in `text`. Typed `unknown` — cast to your schema's type.
    */
   parsed?: unknown;
+  /**
+   * The tool calls the model requested, set only when it called at least one tool
+   * (then `finishReason` is `"tool_use"`). Run them and feed results back as
+   * {@link ToolResultPart}s. `complete()`-only.
+   */
+  toolCalls?: ToolCall[];
 };
 
 export type Provider = {
