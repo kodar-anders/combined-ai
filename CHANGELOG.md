@@ -9,6 +9,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- Per-participant models in `combine()`. A participant can now be an object —
+  `{ provider, model?, maxTokens?, label? }` — instead of a bare provider name, so
+  one combine can mix cheap drafters with a strong synthesizer, or run the **same
+  provider twice with different models**. Each participant gets a unique **id**
+  (its label): the provider name for a bare string, or `<provider>-<model>` when a
+  model is set (override with `label`). Two participants resolving to the same id
+  throw unless disambiguated. A participant's `model`/`maxTokens` take precedence
+  over the request-wide values; an empty `model` or non-positive `maxTokens`
+  override is rejected (omit the field to use the default). Combine
+  results/events/usage now carry both the
+  participant `id` and the actual `provider`; `usage.byParticipant` is keyed by id.
+  `ParticipantSpec` is exported. **Breaking** (pre-release): `participants` is now
+  `ParticipantSpec[]`, `synthesizer` is a participant id (`string`), and
+  `PipelineResult.finalProvider` was renamed to `finalParticipant`.
 - Custom & gateway providers: a `custom` map on `ProviderRegistryConfig`
   registers extra providers under names you choose. Two forms —
   `{ kind: "openai-compatible", apiKey, baseUrl, model, headers?, retry? }` points
@@ -97,7 +111,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   cancels every participant call at once. Use `AbortSignal.timeout(ms)` for a
   timeout; an aborted call rejects with a transport `ProviderError`.
 - `ProviderRegistry` (`src/registry.ts`) — the package's single point of access
-  to its providers. You configure it with `{ anthropic?, openai?, gemini? }`
+  to its providers. You configure it with `{ anthropic?, openai?, google? }`
   (each a provider options object with `apiKey` and optional `model`/`baseUrl`);
   the
   library constructs the configured providers internally by name. `select(name)`
@@ -113,9 +127,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   contract: `complete()` and `stream()` (SSE, terminated by `data: [DONE]`).
   Default model `gpt-4.1`; folds the optional `system` prompt into a leading
   `system` message and sends the token cap as `max_completion_tokens`.
-- Google Gemini provider behind the registry, talking to the Generative Language
-  API directly over the global `fetch` — no SDK dependency. Same `Provider`
-  contract: `complete()` and `stream()` (SSE via `:streamGenerateContent?alt=sse`).
+- Google provider (`google`) behind the registry, talking to the Gemini
+  Generative Language API directly over the global `fetch` — no SDK dependency.
+  Same `Provider` contract: `complete()` and `stream()` (SSE via
+  `:streamGenerateContent?alt=sse`). Configured via `google` (options type
+  `GoogleProviderOptions`); the registry key is the company name, consistent with
+  `anthropic`/`openai`, while the model/API it speaks is Gemini.
   Default model `gemini-2.5-pro`; auth via the `x-goog-api-key` header; maps the
   `assistant` role to Gemini's `model`, wraps text in `parts`, carries the
   optional `system` prompt as `systemInstruction`, and sends the token cap as

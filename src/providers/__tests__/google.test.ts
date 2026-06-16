@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import { ProviderError } from "../../errors";
-import { GeminiProvider } from "../gemini";
+import { GoogleProvider } from "../google";
 
 const originalFetch = globalThis.fetch;
 
@@ -39,7 +39,7 @@ const WEATHER_TOOL = {
   },
 };
 
-describe("GeminiProvider.complete", () => {
+describe("GoogleProvider.complete", () => {
   it("sends the correct request and returns the candidate text", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
@@ -54,7 +54,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
       system: "Be brief.",
@@ -87,7 +87,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [
         { role: "user", content: "Hi" },
@@ -113,7 +113,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-flash", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
       model: "gemini-2.5-flash",
@@ -135,7 +135,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [
         {
@@ -162,7 +162,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [
         {
@@ -224,7 +224,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Where is the Eiffel Tower?" }],
       responseFormat: {
@@ -257,7 +257,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [{ role: "user", content: "Weather in Paris?" }],
       tools: [WEATHER_TOOL],
@@ -314,7 +314,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Weather?" }],
       tools: [WEATHER_TOOL],
@@ -334,7 +334,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [
         {
@@ -412,7 +412,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Weather?" }],
       tools: [WEATHER_TOOL],
@@ -430,7 +430,7 @@ describe("GeminiProvider.complete", () => {
         Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await expect(
       provider.complete({
         messages: [
@@ -454,7 +454,7 @@ describe("GeminiProvider.complete", () => {
     }));
 
     const controller = new AbortController();
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
       signal: controller.signal,
@@ -476,7 +476,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
     });
@@ -496,7 +496,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
     });
@@ -524,7 +524,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const result = await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
     });
@@ -546,7 +546,7 @@ describe("GeminiProvider.complete", () => {
         ),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const error = await provider
       .complete({ messages: [{ role: "user", content: "Hi" }] })
       .catch((e: unknown) => e);
@@ -554,7 +554,7 @@ describe("GeminiProvider.complete", () => {
     expect(error).toBeInstanceOf(ProviderError);
     const providerError = error as ProviderError;
     expect(providerError.kind).toBe("api");
-    expect(providerError.provider).toBe("gemini");
+    expect(providerError.provider).toBe("google");
     expect(providerError.status).toBe(400);
     // Gemini's numeric `code` is skipped; its `status` becomes the error `type`.
     expect(providerError.code).toBeUndefined();
@@ -571,7 +571,7 @@ describe("GeminiProvider.complete", () => {
         }),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const error = await provider
       .complete({ messages: [{ role: "user", content: "Hi" }] })
       .catch((e: unknown) => e);
@@ -579,27 +579,27 @@ describe("GeminiProvider.complete", () => {
     expect(error).toBeInstanceOf(ProviderError);
     const providerError = error as ProviderError;
     expect(providerError.kind).toBe("api");
-    expect(providerError.provider).toBe("gemini");
+    expect(providerError.provider).toBe("google");
     expect(providerError.status).toBe(200);
     expect(providerError.type).toBe("UNAVAILABLE");
-    expect(providerError.message).toContain("gemini request failed (200)");
+    expect(providerError.message).toContain("google request failed (200)");
   });
 
   it("wraps a fetch rejection in a transport ProviderError", async () => {
     mockFetch(() => Promise.reject(new TypeError("network down")));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const error = await provider
       .complete({ messages: [{ role: "user", content: "Hi" }] })
       .catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ProviderError);
     expect((error as ProviderError).kind).toBe("transport");
-    expect((error as ProviderError).provider).toBe("gemini");
+    expect((error as ProviderError).provider).toBe("google");
   });
 });
 
-describe("GeminiProvider.stream", () => {
+describe("GoogleProvider.stream", () => {
   it("yields text deltas parsed from the SSE body", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
@@ -609,7 +609,7 @@ describe("GeminiProvider.stream", () => {
       ]),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const deltas: string[] = [];
     for await (const delta of provider.stream({
       messages: [{ role: "user", content: "Hi" }],
@@ -638,7 +638,7 @@ describe("GeminiProvider.stream", () => {
       ]),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const deltas: string[] = [];
     for await (const delta of provider.stream({
       messages: [{ role: "user", content: "Hi" }],
@@ -667,7 +667,7 @@ describe("GeminiProvider.stream", () => {
     });
     mockFetch(() => ({ ok: true, body }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     for await (const delta of provider.stream({
       messages: [{ role: "user", content: "Hi" }],
     })) {
@@ -684,7 +684,7 @@ describe("GeminiProvider.stream", () => {
       body: sseStream(['data: {"error":{"message":"quota"}}\n\n']),
     }));
 
-    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const provider = new GoogleProvider({ apiKey: "key-test" });
     const run = async (): Promise<void> => {
       const sink: string[] = [];
       for await (const delta of provider.stream({
@@ -694,7 +694,7 @@ describe("GeminiProvider.stream", () => {
       }
     };
 
-    await expect(run()).rejects.toThrow("Gemini stream error");
+    await expect(run()).rejects.toThrow("Google stream error");
   });
 
   it("throws on a non-2xx response before streaming", async () => {
@@ -704,7 +704,7 @@ describe("GeminiProvider.stream", () => {
       text: () => Promise.resolve("rate limited"),
     }));
 
-    const provider = new GeminiProvider({
+    const provider = new GoogleProvider({
       apiKey: "key-test",
       retry: { maxRetries: 0 },
     });
@@ -717,6 +717,6 @@ describe("GeminiProvider.stream", () => {
       }
     };
 
-    await expect(run()).rejects.toThrow("gemini request failed (429)");
+    await expect(run()).rejects.toThrow("google request failed (429)");
   });
 });

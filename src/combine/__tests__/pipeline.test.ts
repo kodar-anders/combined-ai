@@ -74,11 +74,20 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await pipeline(roster, {
@@ -95,7 +104,7 @@ describe("pipeline", () => {
 
     expect(result.strategy).toBe("pipeline");
     // gemini refined last, so its output (after sanitize echo) is the final answer.
-    expect(result.finalProvider).toBe("gemini");
+    expect(result.finalParticipant).toBe("gemini");
     expect(result.model).toBe("gemini-model");
     expect(result.text).toBe("gemini:refine");
     expect(result.stages).toHaveLength(3);
@@ -106,10 +115,15 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await pipeline(roster, {
@@ -130,10 +144,15 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await pipeline(roster, {
@@ -152,7 +171,8 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
     ];
@@ -164,7 +184,7 @@ describe("pipeline", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.phase).toBe("first");
-    expect(result.finalProvider).toBe("anthropic");
+    expect(result.finalParticipant).toBe("anthropic");
     expect(result.text).toBe("anthropic:first");
   });
 
@@ -172,7 +192,8 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, undefined, undefined, {
           inputTokens: 2,
           outputTokens: 3,
@@ -180,7 +201,8 @@ describe("pipeline", () => {
         }),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, undefined, undefined, {
           inputTokens: 1,
           outputTokens: 1,
@@ -216,10 +238,15 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await pipeline(roster, {
@@ -235,11 +262,20 @@ describe("pipeline", () => {
     const roster = [
       // The first participant fails, so the second must run as the first stage.
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "first"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await pipeline(roster, {
@@ -256,7 +292,7 @@ describe("pipeline", () => {
     expect(geminiCall?.request.messages[0]?.content).toContain("openai:first");
 
     expect(result.stages[0]?.status).toBe("failed");
-    expect(result.finalProvider).toBe("gemini");
+    expect(result.finalParticipant).toBe("gemini");
     expect(result.text).toBe("gemini:refine");
   });
 
@@ -264,15 +300,21 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
       // openai fails its refine, so its (absent) output must not carry forward.
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, "refine"),
       },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await pipeline(roster, {
@@ -289,22 +331,28 @@ describe("pipeline", () => {
 
     const openaiStage = result.stages.find((s) => s.provider === "openai");
     expect(openaiStage?.status).toBe("failed");
-    expect(result.finalProvider).toBe("gemini");
+    expect(result.finalParticipant).toBe("gemini");
   });
 
   it("does not advance the running answer on an empty (but successful) stage", async () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
       // openai returns empty text from its refine: it succeeds but contributes nothing.
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, undefined, "refine"),
       },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await pipeline(roster, {
@@ -317,20 +365,26 @@ describe("pipeline", () => {
     expect(geminiCall?.request.messages[0]?.content).toContain(
       "anthropic:first",
     );
-    expect(result.finalProvider).toBe("gemini");
+    expect(result.finalParticipant).toBe("gemini");
   });
 
   it("keeps the last successful answer when the final stage fails", async () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
       // openai refines fine; gemini (last) fails, so openai's answer is final.
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
       {
-        name: "gemini" as const,
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
         provider: fakeProvider("gemini", calls, "refine"),
       },
     ];
@@ -343,7 +397,7 @@ describe("pipeline", () => {
     expect(result.stages.find((s) => s.provider === "gemini")?.status).toBe(
       "failed",
     );
-    expect(result.finalProvider).toBe("openai");
+    expect(result.finalParticipant).toBe("openai");
     expect(result.model).toBe("openai-model");
     expect(result.text).toBe("openai:refine");
   });
@@ -352,11 +406,13 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "first"),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, "first"),
       },
     ];
@@ -373,10 +429,15 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await pipeline(roster, {
@@ -397,12 +458,14 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
       // openai refines fine but its sanitize pass throws.
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, "sanitize"),
       },
     ];
@@ -419,12 +482,14 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
       // openai's refine fails, so anthropic's first-stage answer is final.
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, "refine"),
       },
     ];
@@ -435,7 +500,7 @@ describe("pipeline", () => {
     });
 
     expect(calls.find((c) => c.phase === "sanitize")).toBeUndefined();
-    expect(result.finalProvider).toBe("anthropic");
+    expect(result.finalParticipant).toBe("anthropic");
     expect(result.text).toBe("anthropic:first");
   });
 
@@ -466,10 +531,11 @@ describe("pipeline", () => {
     };
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: echoRefine },
+      { id: "openai", providerName: "openai", provider: echoRefine },
     ];
 
     const result = await pipeline(roster, {
@@ -480,7 +546,7 @@ describe("pipeline", () => {
     // openai advanced (it's the final provider) but the text is unchanged, so the
     // wasted sanitizing call is skipped and the original answer is returned.
     expect(calls.find((c) => c.phase === "sanitize")).toBeUndefined();
-    expect(result.finalProvider).toBe("openai");
+    expect(result.finalParticipant).toBe("openai");
     expect(result.text).toBe("anthropic:first");
   });
 
@@ -489,11 +555,20 @@ describe("pipeline", () => {
     const events: CombineEvent[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "first"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await pipeline(
@@ -506,9 +581,27 @@ describe("pipeline", () => {
 
     const stages = events.flatMap((e) => (e.type === "stage" ? [e] : []));
     expect(stages).toEqual([
-      { type: "stage", provider: "anthropic", status: "failed", index: 0 },
-      { type: "stage", provider: "openai", status: "ok", index: 1 },
-      { type: "stage", provider: "gemini", status: "ok", index: 2 },
+      {
+        type: "stage",
+        id: "anthropic",
+        provider: "anthropic",
+        status: "failed",
+        index: 0,
+      },
+      {
+        type: "stage",
+        id: "openai",
+        provider: "openai",
+        status: "ok",
+        index: 1,
+      },
+      {
+        type: "stage",
+        id: "gemini",
+        provider: "gemini",
+        status: "ok",
+        index: 2,
+      },
     ]);
   });
 
@@ -516,10 +609,15 @@ describe("pipeline", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await pipeline(
@@ -531,5 +629,39 @@ describe("pipeline", () => {
     );
 
     expect(result.text).toBe("openai:refine");
+  });
+
+  it("applies each stage's per-participant model override to its calls", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+        model: "claude-x",
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls),
+        model: "gpt-x",
+      },
+    ];
+
+    await pipeline(roster, {
+      ...PROMPT,
+      participants: [
+        { provider: "anthropic", model: "claude-x" },
+        { provider: "openai", model: "gpt-x" },
+      ],
+    });
+
+    // The first stage runs under anthropic's override...
+    expect(calls.find((c) => c.provider === "anthropic")?.request.model).toBe(
+      "claude-x",
+    );
+    // ...and openai's refine (and its sanitize pass) under openai's.
+    const openaiCalls = calls.filter((c) => c.provider === "openai");
+    expect(openaiCalls.every((c) => c.request.model === "gpt-x")).toBe(true);
   });
 });

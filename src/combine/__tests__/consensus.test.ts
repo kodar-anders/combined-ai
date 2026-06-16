@@ -77,11 +77,20 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -108,10 +117,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const controller = new AbortController();
@@ -131,10 +145,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await consensus(roster, "anthropic", {
@@ -164,10 +183,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await consensus(roster, "anthropic", {
@@ -187,11 +211,20 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await consensus(roster, "gemini", {
@@ -208,10 +241,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await consensus(roster, "anthropic", {
@@ -234,10 +272,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await consensus(roster, "anthropic", {
@@ -261,10 +304,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     await consensus(roster, "anthropic", {
@@ -289,10 +337,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -312,11 +365,16 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         // Drafts/critiques/synth succeed; only the sanitize pass throws.
         provider: fakeProvider("anthropic", calls, "sanitize"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -331,11 +389,20 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "draft"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -361,12 +428,21 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         // Resolves successfully but with an empty draft.
         provider: fakeProvider("anthropic", calls, undefined, "draft"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await consensus(roster, "openai", {
@@ -389,14 +465,20 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, undefined, "draft"),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, undefined, "draft"),
       },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await expect(
@@ -411,14 +493,20 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "draft"),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, "draft"),
       },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await expect(
@@ -433,7 +521,8 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
     ];
@@ -453,10 +542,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "synth"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -474,11 +568,16 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         // Resolves successfully but with empty synthesis output.
         provider: fakeProvider("anthropic", calls, undefined, "synth"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -495,7 +594,8 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         // Synthesis resolves empty (still a billed call) and falls back to openai.
         provider: fakeProvider("anthropic", calls, undefined, "synth", {
           inputTokens: 2,
@@ -504,7 +604,8 @@ describe("consensus", () => {
         }),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, undefined, undefined, {
           inputTokens: 1,
           outputTokens: 1,
@@ -542,15 +643,21 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         // openai drafts fine but its critique fails, compacting the critique list.
         provider: fakeProvider("openai", calls, "critique"),
       },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await consensus(roster, "anthropic", {
@@ -573,7 +680,8 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, undefined, undefined, {
           inputTokens: 2,
           outputTokens: 3,
@@ -581,7 +689,8 @@ describe("consensus", () => {
         }),
       },
       {
-        name: "openai" as const,
+        id: "openai",
+        providerName: "openai" as const,
         provider: fakeProvider("openai", calls, undefined, undefined, {
           inputTokens: 1,
           outputTokens: 1,
@@ -617,10 +726,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await consensus(roster, "anthropic", {
@@ -636,11 +750,20 @@ describe("consensus", () => {
     const events: CombineEvent[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await consensus(
@@ -672,11 +795,20 @@ describe("consensus", () => {
     const events: CombineEvent[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls, "draft"),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
-      { name: "gemini" as const, provider: fakeProvider("gemini", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
     ];
 
     await consensus(
@@ -699,7 +831,8 @@ describe("consensus", () => {
     const events: CombineEvent[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
     ];
@@ -715,7 +848,7 @@ describe("consensus", () => {
 
     expect(events).toEqual([
       { type: "phase", phase: "drafting" },
-      { type: "draft", provider: "anthropic", status: "ok" },
+      { type: "draft", id: "anthropic", provider: "anthropic", status: "ok" },
     ]);
   });
 
@@ -723,10 +856,15 @@ describe("consensus", () => {
     const calls: Call[] = [];
     const roster = [
       {
-        name: "anthropic" as const,
+        id: "anthropic",
+        providerName: "anthropic" as const,
         provider: fakeProvider("anthropic", calls),
       },
-      { name: "openai" as const, provider: fakeProvider("openai", calls) },
+      {
+        id: "openai",
+        providerName: "openai",
+        provider: fakeProvider("openai", calls),
+      },
     ];
 
     const result = await consensus(
@@ -739,5 +877,80 @@ describe("consensus", () => {
     );
 
     expect(result.text).toBe("anthropic:synth");
+  });
+
+  it("applies each participant's model/maxTokens override to its own calls", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+        model: "claude-x",
+        maxTokens: 111,
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls),
+        model: "gpt-x",
+        maxTokens: 222,
+      },
+    ];
+
+    await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+      maxTokens: 999, // request-wide fallback, overridden per participant below
+    });
+
+    // anthropic synthesizes, so it makes draft + critique + synth + sanitize calls,
+    // every one carrying its own override (not the request-wide maxTokens).
+    const anthropicCalls = calls.filter((c) => c.provider === "anthropic");
+    expect(anthropicCalls.length).toBeGreaterThan(1);
+    expect(anthropicCalls.every((c) => c.request.model === "claude-x")).toBe(
+      true,
+    );
+    expect(anthropicCalls.every((c) => c.request.maxTokens === 111)).toBe(true);
+
+    const openaiCalls = calls.filter((c) => c.provider === "openai");
+    expect(openaiCalls.every((c) => c.request.model === "gpt-x")).toBe(true);
+    expect(openaiCalls.every((c) => c.request.maxTokens === 222)).toBe(true);
+  });
+
+  it("supports two participants on the same provider with distinct ids", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "gemini-flash",
+        providerName: "gemini" as const,
+        provider: fakeProvider("flash", calls),
+        model: "gemini-2.5-flash",
+      },
+      {
+        id: "gemini-pro",
+        providerName: "gemini" as const,
+        provider: fakeProvider("pro", calls),
+        model: "gemini-2.5-pro",
+      },
+    ];
+
+    const result = await consensus(roster, "gemini-pro", {
+      ...PROMPT,
+      participants: [
+        { provider: "gemini", model: "gemini-2.5-flash" },
+        { provider: "gemini", model: "gemini-2.5-pro" },
+      ],
+    });
+
+    // Both drafts are tagged by their participant id, but report the same provider.
+    expect(result.drafts.map((d) => d.id)).toEqual([
+      "gemini-flash",
+      "gemini-pro",
+    ]);
+    expect(result.drafts.every((d) => d.provider === "gemini")).toBe(true);
+    // The id-named synthesizer (the "pro" participant) wrote the final answer.
+    expect(result.synthesizer).toBe("gemini-pro");
+    expect(result.text).toBe("pro:synth");
   });
 });

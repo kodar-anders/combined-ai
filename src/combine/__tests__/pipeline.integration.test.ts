@@ -36,7 +36,7 @@ describeLive("ProviderRegistry.combine pipeline (live)", () => {
   const registry = new ProviderRegistry({
     anthropic: { apiKey: anthropicKey ?? "", model: "claude-haiku-4-5" },
     openai: { apiKey: openaiKey ?? "", model: "gpt-4.1-mini" },
-    gemini: { apiKey: geminiKey ?? "", model: "gemini-2.5-flash" },
+    google: { apiKey: geminiKey ?? "", model: "gemini-2.5-flash" },
   });
 
   it(
@@ -51,7 +51,7 @@ describeLive("ProviderRegistry.combine pipeline (live)", () => {
               content: "In one sentence, what makes a good API?",
             },
           ],
-          participants: ["anthropic", "openai", "gemini"],
+          participants: ["anthropic", "openai", "google"],
           strategy: "pipeline",
           // Generous: refined answers are longer, and Gemini 2.5 spends thinking
           // tokens against this cap (see the README note).
@@ -82,7 +82,7 @@ describeLive("ProviderRegistry.combine pipeline (live)", () => {
         }
       }
 
-      console.log("Final provider:", result.finalProvider);
+      console.log("Final provider:", result.finalParticipant);
       console.log("Final answer:", result.text);
 
       expect(result.text.length).toBeGreaterThan(0);
@@ -90,17 +90,19 @@ describeLive("ProviderRegistry.combine pipeline (live)", () => {
       expect(result.stages.map((s) => s.provider)).toEqual([
         "anthropic",
         "openai",
-        "gemini",
+        "google",
       ]);
       expect(result.stages.every((s) => s.status === "ok")).toBe(true);
       // The last stage to produce an answer is the final provider.
-      expect(["anthropic", "openai", "gemini"]).toContain(result.finalProvider);
+      expect(["anthropic", "openai", "google"]).toContain(
+        result.finalParticipant,
+      );
 
       // A stage event fired for each participant, in order.
       const stages = events.flatMap((e) =>
         e.type === "stage" ? [e.provider] : [],
       );
-      expect(stages).toEqual(["anthropic", "openai", "gemini"]);
+      expect(stages).toEqual(["anthropic", "openai", "google"]);
     },
     TIMEOUT_MS,
   );

@@ -55,12 +55,17 @@ export async function ensemble(
   // parsed object on its result.
   const responses = await Promise.all(
     roster.map(async (entry) => {
-      const outcome = await runOutcome(entry.name, () =>
+      const outcome = await runOutcome(entry.id, entry.providerName, () =>
         entry.provider.complete(
-          completionFor(request, request.system, request.messages),
+          completionFor(request, request.system, request.messages, entry),
         ),
       );
-      emit({ type: "response", provider: entry.name, status: outcome.status });
+      emit({
+        type: "response",
+        id: entry.id,
+        provider: entry.providerName,
+        status: outcome.status,
+      });
       return outcome;
     }),
   );

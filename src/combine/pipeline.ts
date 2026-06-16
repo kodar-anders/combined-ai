@@ -64,8 +64,11 @@ const PIPELINE_REFINE_FRAMING =
   "revision, or that multiple assistants were involved.";
 
 /** The running answer carried from one stage to the next (its producing stage + its output). */
-type Running = RosterEntry & {
+type Running = {
+  /** The roster entry (id/provider/overrides) of the stage that produced this answer. */
+  entry: RosterEntry;
   text: string;
+  /** The model that actually produced this answer (the stage's `result.model`). */
   model: string;
   /**
    * Whether this answer may carry process narration and so needs the sanitizing
@@ -101,21 +104,27 @@ export async function pipeline(
     // run of failed stages each start fresh until one produces an answer.
     const completion =
       current === undefined
-        ? completionFor(request, firstSystem, request.messages)
-        : completionFor(request, refineSystem, [
-            {
-              role: "user",
-              content: `## Question\n${question}\n\n## Current answer\n${current.text}`,
-            },
-          ]);
+        ? completionFor(request, firstSystem, request.messages, entry)
+        : completionFor(
+            request,
+            refineSystem,
+            [
+              {
+                role: "user",
+                content: `## Question\n${question}\n\n## Current answer\n${current.text}`,
+              },
+            ],
+            entry,
+          );
 
-    const outcome = await runOutcome(entry.name, () =>
+    const outcome = await runOutcome(entry.id, entry.providerName, () =>
       entry.provider.complete(completion),
     );
     stages.push(outcome);
     emit({
       type: "stage",
-      provider: entry.name,
+      id: entry.id,
+      provider: entry.providerName,
       status: outcome.status,
       index,
     });
@@ -131,7 +140,7 @@ export async function pipeline(
       const needsSanitize =
         current !== undefined &&
         (text !== current.text || current.needsSanitize);
-      current = { ...entry, text, model: outcome.result.model, needsSanitize };
+      current = { entry, text, model: outcome.result.model, needsSanitize };
     }
   }
 
@@ -143,18 +152,23 @@ export async function pipeline(
   // the answer needs no sanitizing (a lone first-stage answer, or an unchanged
   // passthrough), so the extra model call only runs when it can matter.
   const sanitized = current.needsSanitize
-    ? await sanitizeAnswer(current.provider, request, current.text)
+    ? await sanitizeAnswer(
+        current.entry.provider,
+        request,
+        current.text,
+        current.entry,
+      )
     : { text: current.text };
 
   return {
     text: sanitized.text,
     strategy: "pipeline",
-    finalProvider: current.name,
+    finalParticipant: current.entry.id,
     model: current.model,
     stages,
     usage: aggregateUsage([
       ...outcomeUsage(stages),
-      { provider: current.name, usage: sanitized.usage },
+      { id: current.entry.id, usage: sanitized.usage },
     ]),
   };
 }

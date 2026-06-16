@@ -11,16 +11,18 @@ import {
   type CombineOptions,
   type CombineRequest,
   type CombineResult,
+  type ParticipantSpec,
   STRATEGY_NAMES,
 } from "./combine";
 import { consensus } from "./combine/consensus";
 import { ensemble } from "./combine/ensemble";
 import { pipeline } from "./combine/pipeline";
+import { type RosterEntry } from "./combine/shared";
 import {
   AnthropicProvider,
   type AnthropicProviderOptions,
 } from "./providers/anthropic";
-import { GeminiProvider, type GeminiProviderOptions } from "./providers/gemini";
+import { GoogleProvider, type GoogleProviderOptions } from "./providers/google";
 import { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
 import { type RetryOptions } from "./transport";
 import { type Provider } from "./types";
@@ -67,7 +69,7 @@ export type CustomProviderConfig =
   | CustomProviderInstance;
 
 /** The names the library constructs as built-in providers (the single source of truth). */
-const BUILT_IN_NAMES = ["anthropic", "openai", "gemini"] as const;
+const BUILT_IN_NAMES = ["anthropic", "openai", "google"] as const;
 
 /** The provider names the library constructs from its own config. */
 export type BuiltInProviderName = (typeof BUILT_IN_NAMES)[number];
@@ -76,7 +78,7 @@ export type BuiltInProviderName = (typeof BUILT_IN_NAMES)[number];
 export type ProviderRegistryConfig = {
   anthropic?: AnthropicProviderOptions;
   openai?: OpenAIProviderOptions;
-  gemini?: GeminiProviderOptions;
+  google?: GoogleProviderOptions;
   /**
    * Extra providers registered under names you choose — an OpenAI-compatible
    * gateway/local endpoint or a {@link Provider} you bring yourself. Each name
@@ -109,8 +111,8 @@ export class ProviderRegistry {
     if (config.openai) {
       this.#providers.set("openai", new OpenAIProvider(config.openai));
     }
-    if (config.gemini) {
-      this.#providers.set("gemini", new GeminiProvider(config.gemini));
+    if (config.google) {
+      this.#providers.set("google", new GoogleProvider(config.google));
     }
     if (config.custom) {
       const builtInNames: readonly string[] = BUILT_IN_NAMES;
@@ -153,13 +155,21 @@ export class ProviderRegistry {
     request: CombineRequest,
     options?: CombineOptions,
   ): Promise<CombineResult> {
-    const [firstParticipant] = request.participants;
-    if (firstParticipant === undefined) {
+    // Normalize each participant spec to its id + provider + per-participant
+    // overrides. Two participants resolving to the same id (e.g. the same
+    // provider+model twice without an explicit `label`) is rejected.
+    const normalized = request.participants.map((spec) =>
+      normalizeParticipant(spec),
+    );
+    const [first] = normalized;
+    if (first === undefined) {
       throw new Error("combine requires at least one participant");
     }
-    if (new Set(request.participants).size !== request.participants.length) {
+    const ids = normalized.map((p) => p.id);
+    if (new Set(ids).size !== ids.length) {
       throw new Error(
-        `combine participants must be unique: ${request.participants.join(", ")}`,
+        `combine participant labels must be unique: ${ids.join(", ")}. ` +
+          "Set a distinct `label` when two participants share a provider and model.",
       );
     }
     if (request.messages.length === 0) {
@@ -175,9 +185,9 @@ export class ProviderRegistry {
       );
     }
 
-    const roster = request.participants.map((name) => ({
-      name,
-      provider: this.select(name),
+    const roster: RosterEntry[] = normalized.map((p) => ({
+      ...p,
+      provider: this.select(p.providerName),
     }));
 
     const strategy = request.strategy ?? "consensus";
@@ -201,8 +211,8 @@ export class ProviderRegistry {
       // `synthesizer`/`minParticipants` are consensus-only, so they're validated
       // here (not in the shared preamble) — pipeline ignores them entirely.
       case "consensus": {
-        this.#validateConsensusOptions(request);
-        const synthesizer = request.synthesizer ?? firstParticipant;
+        this.#validateConsensusOptions(request, ids);
+        const synthesizer = request.synthesizer ?? first.id;
         return consensus(roster, synthesizer, request, options?.onEvent);
       }
       case "pipeline":
@@ -232,24 +242,24 @@ export class ProviderRegistry {
   }
 
   /** Validate the consensus-only request options (`minParticipants`, `synthesizer`). */
-  #validateConsensusOptions(request: CombineRequest): void {
+  #validateConsensusOptions(request: CombineRequest, ids: string[]): void {
     const { minParticipants } = request;
     if (minParticipants !== undefined) {
       if (!Number.isInteger(minParticipants) || minParticipants < 1) {
         throw new Error("combine minParticipants must be a positive integer");
       }
-      if (minParticipants > request.participants.length) {
+      if (minParticipants > ids.length) {
         throw new Error(
-          `combine minParticipants (${String(minParticipants)}) cannot exceed the number of participants (${String(request.participants.length)})`,
+          `combine minParticipants (${String(minParticipants)}) cannot exceed the number of participants (${String(ids.length)})`,
         );
       }
     }
     if (
       request.synthesizer !== undefined &&
-      !request.participants.includes(request.synthesizer)
+      !ids.includes(request.synthesizer)
     ) {
       throw new Error(
-        `Synthesizer "${request.synthesizer}" must be one of the participants: ${request.participants.join(", ")}`,
+        `Synthesizer "${request.synthesizer}" must be one of the participants: ${ids.join(", ")}`,
       );
     }
   }
@@ -268,6 +278,47 @@ export class ProviderRegistry {
     const names = this.names();
     return names.length > 0 ? names.join(", ") : "(none)";
   }
+}
+
+/**
+ * Resolve a {@link ParticipantSpec} to its id, provider name, and per-participant
+ * overrides. A bare string uses the provider's default model and an id equal to
+ * the provider name; the object form derives the id as `<provider>-<model>` when a
+ * model is set (else the provider name), unless an explicit `label` is given.
+ */
+function normalizeParticipant(
+  spec: ParticipantSpec,
+): Omit<RosterEntry, "provider"> {
+  if (typeof spec === "string") {
+    return { id: spec, providerName: spec };
+  }
+  // Reject falsy overrides up front: `??` in completionFor preserves "" / 0, so an
+  // empty model would be sent to the API (and yield a malformed `<provider>-` id)
+  // and a non-positive maxTokens would truncate — omit the field to use the default.
+  if (spec.model?.trim() === "") {
+    throw new Error(
+      `combine participant for "${spec.provider}" has an empty model; omit \`model\` to use the default.`,
+    );
+  }
+  if (
+    spec.maxTokens !== undefined &&
+    (!Number.isInteger(spec.maxTokens) || spec.maxTokens < 1)
+  ) {
+    throw new Error(
+      `combine participant for "${spec.provider}" has an invalid maxTokens (${String(spec.maxTokens)}); must be a positive integer.`,
+    );
+  }
+  const id =
+    spec.label ??
+    (spec.model === undefined
+      ? spec.provider
+      : `${spec.provider}-${spec.model}`);
+  return {
+    id,
+    providerName: spec.provider,
+    model: spec.model,
+    maxTokens: spec.maxTokens,
+  };
 }
 
 /** Build the {@link Provider} for a custom registry entry registered under `name`. */

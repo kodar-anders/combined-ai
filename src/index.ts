@@ -32,7 +32,7 @@ export { type RetryOptions } from "./transport";
 
 export { type AnthropicProviderOptions } from "./providers/anthropic";
 export { type OpenAIProviderOptions } from "./providers/openai";
-export { type GeminiProviderOptions } from "./providers/gemini";
+export { type GoogleProviderOptions } from "./providers/google";
 
 export {
   ProviderRegistry,
@@ -54,6 +54,7 @@ export type {
   EnsembleAgreement,
   EnsembleResult,
   ParticipantOutcome,
+  ParticipantSpec,
   PipelineResult,
   StrategyName,
 } from "./combine";

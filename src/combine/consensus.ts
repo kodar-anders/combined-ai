@@ -26,8 +26,7 @@ import {
   sanitizeAnswer,
   type UsageEntry,
 } from "./shared";
-import { type ProviderName } from "../registry";
-import { type CompletionResult, type Provider } from "../types";
+import { type CompletionResult } from "../types";
 
 /**
  * Prepended to the draft and critique phases — the messages that travel from one
@@ -72,10 +71,8 @@ const SYNTH_FRAMING =
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-/** A participant whose draft succeeded, kept with its provider instance for later phases. */
-type Survivor = {
-  provider: Provider;
-  name: ProviderName;
+/** A participant whose draft succeeded, kept with its roster entry for later phases. */
+type Survivor = RosterEntry & {
   result: CompletionResult;
 };
 
@@ -88,7 +85,7 @@ type Survivor = {
  */
 export async function consensus(
   roster: RosterEntry[],
-  synthesizer: ProviderName,
+  synthesizer: string,
   request: CombineRequest,
   onEvent?: (event: CombineEvent) => void,
 ): Promise<ConsensusResult> {
@@ -101,13 +98,18 @@ export async function consensus(
   const draftSystem = composeSystem(request.system, CONCISE_DIRECTIVE);
   const draftResults = await Promise.all(
     roster.map(async (entry) => {
-      const outcome = await runOutcome(entry.name, () =>
+      const outcome = await runOutcome(entry.id, entry.providerName, () =>
         entry.provider.complete(
-          completionFor(request, draftSystem, request.messages),
+          completionFor(request, draftSystem, request.messages, entry),
         ),
       );
-      emit({ type: "draft", provider: entry.name, status: outcome.status });
-      return { ...entry, outcome };
+      emit({
+        type: "draft",
+        id: entry.id,
+        provider: entry.providerName,
+        status: outcome.status,
+      });
+      return { entry, outcome };
     }),
   );
   const drafts: ParticipantOutcome[] = draftResults.map((d) => d.outcome);
@@ -118,7 +120,7 @@ export async function consensus(
   // prompts — wasted tokens and degraded consensus. Mirrors the synthesis guard.
   const survivors: Survivor[] = draftResults.flatMap((d) =>
     d.outcome.status === "ok" && d.outcome.result.text.trim() !== ""
-      ? [{ provider: d.provider, name: d.name, result: d.outcome.result }]
+      ? [{ ...d.entry, result: d.outcome.result }]
       : [],
   );
 
@@ -131,7 +133,7 @@ export async function consensus(
     return {
       text: firstSurvivor.result.text,
       strategy: "consensus",
-      synthesizer: firstSurvivor.name,
+      synthesizer: firstSurvivor.id,
       model: firstSurvivor.result.model,
       drafts,
       critiques: [],
@@ -157,14 +159,22 @@ export async function consensus(
   );
   const critiques: ParticipantOutcome[] = await Promise.all(
     survivors.map(async (s) => {
-      const outcome = await runOutcome(s.name, () =>
+      const outcome = await runOutcome(s.id, s.providerName, () =>
         s.provider.complete(
-          completionFor(request, critiqueSystem, [
-            { role: "user", content: critiqueBody },
-          ]),
+          completionFor(
+            request,
+            critiqueSystem,
+            [{ role: "user", content: critiqueBody }],
+            s,
+          ),
         ),
       );
-      emit({ type: "critique", provider: s.name, status: outcome.status });
+      emit({
+        type: "critique",
+        id: s.id,
+        provider: s.providerName,
+        status: outcome.status,
+      });
       return outcome;
     }),
   );
@@ -184,15 +194,18 @@ export async function consensus(
   for (const candidate of synthesizerOrder(survivors, synthesizer)) {
     try {
       const result = await candidate.provider.complete(
-        completionFor(request, synthSystem, [
-          { role: "user", content: synthBody },
-        ]),
+        completionFor(
+          request,
+          synthSystem,
+          [{ role: "user", content: synthBody }],
+          candidate,
+        ),
       );
-      synthUsage.push({ provider: candidate.name, usage: result.usage });
+      synthUsage.push({ id: candidate.id, usage: result.usage });
       // A resolved-but-empty synthesis (e.g. Gemini consuming the whole token
       // budget on thinking) is treated as a failure so the next survivor is tried.
       if (result.text.trim() === "") {
-        lastError = new Error(`${candidate.name} produced an empty synthesis`);
+        lastError = new Error(`${candidate.id} produced an empty synthesis`);
         continue;
       }
       // Second pass strips any process narration the synthesis framing
@@ -201,12 +214,13 @@ export async function consensus(
         candidate.provider,
         request,
         result.text,
+        candidate,
       );
-      synthUsage.push({ provider: candidate.name, usage: sanitized.usage });
+      synthUsage.push({ id: candidate.id, usage: sanitized.usage });
       return {
         text: sanitized.text,
         strategy: "consensus",
-        synthesizer: candidate.name,
+        synthesizer: candidate.id,
         model: result.model,
         drafts,
         critiques,
@@ -228,9 +242,9 @@ export async function consensus(
 /** The requested synthesizer first (if it survived), then the other survivors as fallbacks. */
 function synthesizerOrder(
   survivors: Survivor[],
-  synthesizer: ProviderName,
+  synthesizer: string,
 ): Survivor[] {
-  const requested = survivors.find((s) => s.name === synthesizer);
+  const requested = survivors.find((s) => s.id === synthesizer);
   const rest = survivors.filter((s) => s !== requested);
   return requested ? [requested, ...rest] : rest;
 }
@@ -240,7 +254,7 @@ function renderAnswers(survivors: Survivor[], anonymized: boolean): string {
     .map((s, i) => {
       const label = anonymized
         ? `Answer ${LETTERS[i] ?? `#${String(i + 1)}`}`
-        : `Answer from ${s.name}`;
+        : `Answer from ${s.id}`;
       return `### ${label}\n${s.result.text}`;
     })
     .join("\n\n");
@@ -262,7 +276,7 @@ function renderCritiques(
     }
     const label = anonymized
       ? `Critique ${LETTERS[i] ?? `#${String(i + 1)}`}`
-      : `Critique from ${critique.provider}`;
+      : `Critique from ${critique.id}`;
     blocks.push(`### ${label}\n${critique.result.text}`);
   }
   return blocks.join("\n\n");
