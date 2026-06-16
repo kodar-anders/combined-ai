@@ -22,17 +22,78 @@ import {
 } from "./providers/anthropic";
 import { GeminiProvider, type GeminiProviderOptions } from "./providers/gemini";
 import { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
+import { type RetryOptions } from "./transport";
 import { type Provider } from "./types";
+
+/**
+ * An OpenAI Chat Completions–compatible endpoint registered under a custom name.
+ * The library reuses its OpenAI provider against your `baseUrl`, so any service
+ * that speaks the Chat Completions wire format works — OpenRouter, Together,
+ * Groq, Ollama, a local server, etc.
+ */
+export type OpenAICompatibleConfig = {
+  kind: "openai-compatible";
+  apiKey: string;
+  /**
+   * Base URL of the endpoint, **excluding** the `/v1/chat/completions` path the
+   * provider appends (e.g. `https://api.groq.com/openai`, `http://localhost:11434`).
+   */
+  baseUrl: string;
+  /**
+   * The model id to send. Required — unlike the built-ins there is no sensible
+   * default for a third-party endpoint. `request.model` (or combine's `model`)
+   * still overrides it per call.
+   */
+  model: string;
+  /** Extra headers merged into every request (e.g. OpenRouter's `HTTP-Referer`/`X-Title`). */
+  headers?: Record<string, string>;
+  /** Bounded retry/backoff on 429/503/529. Defaults applied when omitted. */
+  retry?: RetryOptions;
+};
+
+/**
+ * A provider you implement yourself (anything satisfying {@link Provider}),
+ * registered under a custom name. The escape hatch for an API the library
+ * doesn't speak natively, or for wrapping a built-in with instrumentation.
+ */
+export type CustomProviderInstance = {
+  kind: "provider";
+  provider: Provider;
+};
+
+/** How a custom (non-built-in) provider is registered. */
+export type CustomProviderConfig =
+  | OpenAICompatibleConfig
+  | CustomProviderInstance;
+
+/** The names the library constructs as built-in providers (the single source of truth). */
+const BUILT_IN_NAMES = ["anthropic", "openai", "gemini"] as const;
+
+/** The provider names the library constructs from its own config. */
+export type BuiltInProviderName = (typeof BUILT_IN_NAMES)[number];
 
 /** Per-provider configuration. Include a provider's key to register it. */
 export type ProviderRegistryConfig = {
   anthropic?: AnthropicProviderOptions;
   openai?: OpenAIProviderOptions;
   gemini?: GeminiProviderOptions;
+  /**
+   * Extra providers registered under names you choose — an OpenAI-compatible
+   * gateway/local endpoint or a {@link Provider} you bring yourself. Each name
+   * must not collide with a built-in.
+   */
+  custom?: Record<string, CustomProviderConfig>;
 };
 
-/** The names the registry knows how to construct. */
-export type ProviderName = keyof ProviderRegistryConfig;
+/**
+ * A configured provider's name: the three built-ins, or any custom name you
+ * registered. The `string & Record<never, never>` intersection keeps editor
+ * autocomplete for the built-in literals while still accepting an arbitrary
+ * custom string.
+ */
+export type ProviderName =
+  | BuiltInProviderName
+  | (string & Record<never, never>);
 
 export class ProviderRegistry {
   readonly #providers = new Map<ProviderName, Provider>();
@@ -50,6 +111,17 @@ export class ProviderRegistry {
     }
     if (config.gemini) {
       this.#providers.set("gemini", new GeminiProvider(config.gemini));
+    }
+    if (config.custom) {
+      const builtInNames: readonly string[] = BUILT_IN_NAMES;
+      for (const [name, custom] of Object.entries(config.custom)) {
+        if (builtInNames.includes(name)) {
+          throw new Error(
+            `Custom provider name "${name}" collides with a built-in; choose a different name.`,
+          );
+        }
+        this.#providers.set(name, constructCustom(name, custom));
+      }
     }
   }
 
@@ -184,7 +256,7 @@ export class ProviderRegistry {
 
   /** Whether a provider is configured under `name`. */
   has(name: string): boolean {
-    return this.#providers.has(name as ProviderName);
+    return this.#providers.has(name);
   }
 
   /** The names of all configured providers. */
@@ -195,5 +267,36 @@ export class ProviderRegistry {
   #configuredList(): string {
     const names = this.names();
     return names.length > 0 ? names.join(", ") : "(none)";
+  }
+}
+
+/** Build the {@link Provider} for a custom registry entry registered under `name`. */
+function constructCustom(name: string, custom: CustomProviderConfig): Provider {
+  switch (custom.kind) {
+    case "openai-compatible":
+      // The OpenAI provider already speaks Chat Completions against any baseUrl,
+      // so an OpenAI-compatible gateway is just it pointed elsewhere. Pass `name`
+      // so its errors attribute to this gateway, not a hardcoded "openai".
+      return new OpenAIProvider(
+        {
+          apiKey: custom.apiKey,
+          baseUrl: custom.baseUrl,
+          model: custom.model,
+          headers: custom.headers,
+          retry: custom.retry,
+        },
+        name,
+      );
+    case "provider":
+      return custom.provider;
+    default: {
+      // Exhaustiveness guard: a future `kind` added without a case here becomes a
+      // compile error rather than silently returning undefined (noImplicitReturns
+      // is off). Mirrors the strategy switch in combine().
+      const unreachable: never = custom;
+      throw new Error(
+        `Unhandled custom provider kind: ${JSON.stringify(unreachable)}`,
+      );
+    }
   }
 }
