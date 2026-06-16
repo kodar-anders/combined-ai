@@ -4,17 +4,22 @@
  */
 
 import { apiError, apiErrorFromBody } from "../errors";
+import { extractModel, isRecord } from "./extract";
+import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
-  type ContentPart,
   type FilePart,
   type FinishReason,
+  type ImagePart,
   type MediaSource,
   type Message,
   type Provider,
+  type TextPart,
+  type ToolCall,
+  type ToolChoice,
   type Usage,
 } from "../types";
 
@@ -91,6 +96,7 @@ export class OpenAIProvider implements Provider {
       refusal,
       usage: extractUsage(data),
       parsed: parseStructured(request, text),
+      toolCalls: extractToolCalls(data),
     };
   }
 
@@ -119,57 +125,14 @@ export class OpenAIProvider implements Provider {
       throw new Error("OpenAI streaming response had no body");
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      let result = await reader.read();
-      while (!result.done) {
-        buffer += decoder.decode(result.value as Uint8Array, { stream: true });
-
-        for (
-          let nl = buffer.indexOf("\n");
-          nl !== -1;
-          nl = buffer.indexOf("\n")
-        ) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-
-          if (!line.startsWith("data:")) {
-            continue;
-          }
-          const payload = line.slice("data:".length).trim();
-          if (payload === "[DONE]") {
-            return;
-          }
-          if (payload === "") {
-            continue;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-          if (!isRecord(parsed)) {
-            continue;
-          }
-
-          if (isRecord(parsed.error)) {
-            throw new Error(`OpenAI stream error: ${payload}`);
-          }
-
-          const delta = firstChoiceDelta(parsed);
-          if (isRecord(delta) && typeof delta.content === "string") {
-            yield delta.content;
-          }
-        }
-
-        result = await reader.read();
+    for await (const event of sseJson(response.body)) {
+      if (isRecord(event.error)) {
+        throw new Error(`OpenAI stream error: ${JSON.stringify(event)}`);
       }
-    } finally {
-      await reader.cancel();
+      const delta = firstChoiceDelta(event);
+      if (isRecord(delta) && typeof delta.content === "string") {
+        yield delta.content;
+      }
     }
   }
 
@@ -204,6 +167,19 @@ export class OpenAIProvider implements Provider {
         },
       };
     }
+    if (request.tools !== undefined) {
+      body.tools = request.tools.map((tool) => ({
+        type: "function",
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      }));
+    }
+    if (request.toolChoice !== undefined) {
+      body.tool_choice = toOpenAIToolChoice(request.toolChoice);
+    }
     if (stream) {
       body.stream = true;
     }
@@ -211,35 +187,104 @@ export class OpenAIProvider implements Provider {
   }
 }
 
+/** Map the provider-agnostic tool choice onto OpenAI's `tool_choice`. */
+function toOpenAIToolChoice(choice: ToolChoice): unknown {
+  if (typeof choice === "object") {
+    return { type: "function", function: { name: choice.name } };
+  }
+  // "any" is OpenAI's "required"; "auto"/"none" map by name.
+  return choice === "any" ? "required" : choice;
+}
+
 type OpenAIPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } }
   | { type: "file"; file: { filename?: string; file_data: string } };
 
+type OpenAIToolCall = {
+  id?: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+type OpenAIMessage =
+  | {
+      role: string;
+      content: string | OpenAIPart[] | null;
+      tool_calls?: OpenAIToolCall[];
+    }
+  | { role: "tool"; tool_call_id?: string; content: string };
+
+/** Content parts other than tool parts (which OpenAI carries at the message level). */
+type OpenAIContentPart = TextPart | ImagePart | FilePart;
+
 /**
  * OpenAI carries the system prompt as a leading `system` message rather than a
  * top-level field, so fold {@link CompletionRequest.system} into the array. A
- * bare-`string` content is sent as-is (OpenAI accepts a string or an array of
- * parts); structured content is mapped part-by-part.
+ * message may expand to several wire messages: OpenAI represents tool calls on an
+ * assistant message's `tool_calls`, and each tool result as its own `tool`-role
+ * message — so tool parts are handled at the message level, not as content parts.
  */
-function toOpenAIMessages(
-  request: CompletionRequest,
-): Array<{ role: string; content: string | OpenAIPart[] }> {
-  const messages: Array<{ role: string; content: string | OpenAIPart[] }> =
-    request.messages.map((message: Message) => ({
-      role: message.role,
-      content:
-        typeof message.content === "string"
-          ? message.content
-          : message.content.map((part) => toOpenAIPart(part)),
-    }));
+function toOpenAIMessages(request: CompletionRequest): OpenAIMessage[] {
+  const messages = request.messages.flatMap((message) =>
+    toOpenAIWireMessages(message),
+  );
   if (request.system !== undefined) {
     messages.unshift({ role: "system", content: request.system });
   }
   return messages;
 }
 
-function toOpenAIPart(part: ContentPart): OpenAIPart {
+function toOpenAIWireMessages(message: Message): OpenAIMessage[] {
+  if (typeof message.content === "string") {
+    return [{ role: message.role, content: message.content }];
+  }
+
+  const toolUses = message.content.filter((p) => p.type === "tool_use");
+  const toolResults = message.content.filter((p) => p.type === "tool_result");
+  const rest = message.content.filter((p): p is OpenAIContentPart =>
+    ["text", "image", "file"].includes(p.type),
+  );
+
+  // An assistant turn that called tools: content (if any) plus `tool_calls`.
+  if (toolUses.length > 0) {
+    return [
+      {
+        role: message.role,
+        content: rest.length > 0 ? rest.map((p) => toOpenAIPart(p)) : null,
+        tool_calls: toolUses.map((u) => {
+          if (u.id === undefined) {
+            throw new Error(
+              "OpenAI requires an id on each tool call; replay the ToolCall.id you received from the model.",
+            );
+          }
+          return {
+            id: u.id,
+            type: "function",
+            function: { name: u.name, arguments: JSON.stringify(u.input) },
+          };
+        }),
+      },
+    ];
+  }
+
+  // Tool results become one `tool`-role message each; any other parts follow as a
+  // normal message.
+  const out: OpenAIMessage[] = toolResults.map((r) => {
+    if (r.toolUseId === undefined) {
+      throw new Error(
+        "OpenAI requires toolUseId on each tool result; set it to the id of the ToolCall you are answering.",
+      );
+    }
+    return { role: "tool", tool_call_id: r.toolUseId, content: r.content };
+  });
+  if (rest.length > 0) {
+    out.push({ role: message.role, content: rest.map((p) => toOpenAIPart(p)) });
+  }
+  return out;
+}
+
+function toOpenAIPart(part: OpenAIContentPart): OpenAIPart {
   switch (part.type) {
     case "text":
       return { type: "text", text: part.text };
@@ -279,10 +324,6 @@ function toOpenAIFile(part: FilePart): {
     : { filename: part.filename, file_data };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function toArray(value: unknown): unknown[] {
   return Array.isArray(value) ? (value as unknown[]) : [];
 }
@@ -305,11 +346,42 @@ function firstChoiceDelta(data: unknown): unknown {
   return firstChoice(data)?.delta;
 }
 
-function extractModel(data: unknown, fallback: string): string {
-  if (isRecord(data) && typeof data.model === "string") {
-    return data.model;
+/**
+ * Collect `choices[0].message.tool_calls` as provider-agnostic tool calls.
+ * OpenAI's `arguments` is a JSON **string**, so it's parsed into the `input`
+ * object (a malformed/empty string yields `{}`).
+ */
+function extractToolCalls(data: unknown): ToolCall[] | undefined {
+  const message = firstChoice(data)?.message;
+  const toolCalls = isRecord(message) ? toArray(message.tool_calls) : [];
+  const calls: ToolCall[] = [];
+  for (const call of toolCalls) {
+    if (!isRecord(call) || !isRecord(call.function)) {
+      continue;
+    }
+    const fn = call.function;
+    if (typeof fn.name !== "string") {
+      continue;
+    }
+    calls.push({
+      id: typeof call.id === "string" ? call.id : undefined,
+      name: fn.name,
+      input: parseArguments(fn.arguments),
+    });
   }
-  return fallback;
+  return calls.length > 0 ? calls : undefined;
+}
+
+function parseArguments(args: unknown): Record<string, unknown> {
+  if (typeof args !== "string") {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(args);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function extractFinishReason(data: unknown): string | undefined {
@@ -330,6 +402,9 @@ function normalizeFinishReason(
       return "length";
     case "content_filter":
       return "content_filter";
+    case "tool_calls":
+    case "function_call":
+      return "tool_use";
     default:
       return "other";
   }

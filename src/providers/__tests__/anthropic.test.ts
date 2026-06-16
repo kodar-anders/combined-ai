@@ -28,6 +28,17 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+const WEATHER_TOOL = {
+  name: "get_weather",
+  description: "Get the weather for a city.",
+  parameters: {
+    type: "object",
+    properties: { city: { type: "string" } },
+    required: ["city"],
+    additionalProperties: false,
+  },
+};
+
 describe("AnthropicProvider.complete", () => {
   it("sends the correct request and returns concatenated text", async () => {
     const fetchMock = mockFetch(() => ({
@@ -228,6 +239,138 @@ describe("AnthropicProvider.complete", () => {
 
     expect(result.text).toBe("not json");
     expect(result.parsed).toBeUndefined();
+  });
+
+  it("sends tools and tool_choice", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Weather in Paris?" }],
+      tools: [WEATHER_TOOL],
+      toolChoice: { name: "get_weather" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([
+      {
+        name: "get_weather",
+        description: "Get the weather for a city.",
+        input_schema: WEATHER_TOOL.parameters,
+      },
+    ]);
+    expect(body.tool_choice).toEqual({ type: "tool", name: "get_weather" });
+  });
+
+  it("extracts tool_use blocks as toolCalls with finishReason tool_use", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          stop_reason: "tool_use",
+          content: [
+            { type: "text", text: "Let me check." },
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "get_weather",
+              input: { city: "Paris" },
+            },
+          ],
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Weather?" }],
+      tools: [WEATHER_TOOL],
+    });
+
+    expect(result.finishReason).toBe("tool_use");
+    expect(result.text).toBe("Let me check.");
+    expect(result.toolCalls).toEqual([
+      { id: "toolu_1", name: "get_weather", input: { city: "Paris" } },
+    ]);
+  });
+
+  it("maps tool_use and tool_result content parts onto blocks", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        { role: "user", content: "Weather?" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "get_weather",
+              input: { city: "Paris" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", toolUseId: "toolu_1", content: "Sunny" },
+          ],
+        },
+      ],
+      tools: [WEATHER_TOOL],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages[1].content).toEqual([
+      {
+        type: "tool_use",
+        id: "toolu_1",
+        name: "get_weather",
+        input: { city: "Paris" },
+      },
+    ]);
+    expect(body.messages[2].content).toEqual([
+      { type: "tool_result", tool_use_id: "toolu_1", content: "Sunny" },
+    ]);
+  });
+
+  it("hoists tool_result blocks ahead of text (Anthropic requires them first)", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          // Natural author order: explanatory text, then the result.
+          content: [
+            { type: "text", text: "Here is what the tool returned:" },
+            { type: "tool_result", toolUseId: "toolu_1", content: "Sunny" },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    // The tool_result is hoisted to the front; the text follows.
+    expect(body.messages[0].content).toEqual([
+      { type: "tool_result", tool_use_id: "toolu_1", content: "Sunny" },
+      { type: "text", text: "Here is what the tool returned:" },
+    ]);
   });
 
   it("forwards an abort signal to fetch", async () => {
@@ -502,6 +645,26 @@ describe("AnthropicProvider.stream", () => {
     }
 
     expect(deltas).toEqual(["Hello", " world"]);
+  });
+
+  it("flushes a final data line that has no trailing newline", async () => {
+    mockFetch(() => ({
+      ok: true,
+      body: sseStream([
+        // The stream closes right after the payload, with no terminating "\n".
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Bye"}}',
+      ]),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const deltas: string[] = [];
+    for await (const delta of provider.stream({
+      messages: [{ role: "user", content: "Hi" }],
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toEqual(["Bye"]);
   });
 
   it("releases the reader when the consumer breaks early", async () => {

@@ -65,4 +65,33 @@ describeLive("GeminiProvider (live)", () => {
     },
     TIMEOUT_MS,
   );
+
+  it(
+    "requests a tool call",
+    async () => {
+      const result = await provider.complete({
+        messages: [{ role: "user", content: "What's the weather in Paris?" }],
+        tools: [
+          {
+            name: "get_weather",
+            description: "Get the current weather for a city.",
+            parameters: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+              additionalProperties: false,
+            },
+          },
+        ],
+        toolChoice: { name: "get_weather" },
+        // Leave room for thinking tokens (see the complete test above).
+        maxTokens: 512,
+      });
+
+      expect(result.finishReason).toBe("tool_use");
+      expect(result.toolCalls?.[0]?.name).toBe("get_weather");
+      console.log("Tool call:", JSON.stringify(result.toolCalls));
+    },
+    TIMEOUT_MS,
+  );
 });

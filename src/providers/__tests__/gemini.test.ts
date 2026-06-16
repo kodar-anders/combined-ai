@@ -28,6 +28,17 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+const WEATHER_TOOL = {
+  name: "get_weather",
+  description: "Get the weather for a city.",
+  parameters: {
+    type: "object",
+    properties: { city: { type: "string" } },
+    required: ["city"],
+    additionalProperties: false,
+  },
+};
+
 describe("GeminiProvider.complete", () => {
   it("sends the correct request and returns the candidate text", async () => {
     const fetchMock = mockFetch(() => ({
@@ -237,6 +248,202 @@ describe("GeminiProvider.complete", () => {
       required: ["city"],
       additionalProperties: false,
     });
+  });
+
+  it("sends functionDeclarations (UPPERCASE param types) and toolConfig", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Weather in Paris?" }],
+      tools: [WEATHER_TOOL],
+      toolChoice: { name: "get_weather" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: "get_weather",
+            description: "Get the weather for a city.",
+            parameters: {
+              type: "OBJECT",
+              properties: { city: { type: "STRING" } },
+              required: ["city"],
+              additionalProperties: false,
+            },
+          },
+        ],
+      },
+    ]);
+    expect(body.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["get_weather"],
+      },
+    });
+  });
+
+  it("extracts functionCall parts as toolCalls and overrides finishReason to tool_use", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: {
+                parts: [
+                  {
+                    functionCall: {
+                      name: "get_weather",
+                      args: { city: "Paris" },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Weather?" }],
+      tools: [WEATHER_TOOL],
+    });
+
+    expect(result.finishReason).toBe("tool_use");
+    expect(result.rawFinishReason).toBe("STOP");
+    expect(result.toolCalls).toEqual([
+      { name: "get_weather", input: { city: "Paris" } },
+    ]);
+  });
+
+  it("maps tool_use to a functionCall part and tool_result to a functionResponse part", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "fc_1",
+              name: "get_weather",
+              input: { city: "Paris" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              toolUseId: "fc_1",
+              name: "get_weather",
+              content: "Sunny",
+            },
+          ],
+        },
+      ],
+      tools: [WEATHER_TOOL],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.contents).toEqual([
+      {
+        role: "model",
+        parts: [
+          {
+            functionCall: {
+              name: "get_weather",
+              id: "fc_1",
+              args: { city: "Paris" },
+            },
+          },
+        ],
+      },
+      {
+        role: "user",
+        parts: [
+          {
+            functionResponse: {
+              name: "get_weather",
+              id: "fc_1",
+              response: { result: "Sunny" },
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("does not mask a MAX_TOKENS stop with tool_use when a functionCall is present", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [
+            {
+              // A truncated tool call: the function-call part exists but the stop
+              // reason is MAX_TOKENS, which must not be reported as a clean tool_use.
+              finishReason: "MAX_TOKENS",
+              content: {
+                parts: [{ functionCall: { name: "get_weather", args: {} } }],
+              },
+            },
+          ],
+        }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Weather?" }],
+      tools: [WEATHER_TOOL],
+    });
+
+    expect(result.finishReason).toBe("length");
+    expect(result.rawFinishReason).toBe("MAX_TOKENS");
+    expect(result.toolCalls).toHaveLength(1);
+  });
+
+  it("throws when a tool_result has no name (Gemini matches by name)", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
+    }));
+
+    const provider = new GeminiProvider({ apiKey: "key-test" });
+    await expect(
+      provider.complete({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", toolUseId: "fc_1", content: "Sunny" },
+            ],
+          },
+        ],
+        tools: [WEATHER_TOOL],
+      }),
+    ).rejects.toThrow(/requires the tool name/);
   });
 
   it("forwards an abort signal to fetch", async () => {

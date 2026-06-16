@@ -57,4 +57,32 @@ describeLive("AnthropicProvider (live)", () => {
     },
     TIMEOUT_MS,
   );
+
+  it(
+    "requests a tool call",
+    async () => {
+      const result = await provider.complete({
+        messages: [{ role: "user", content: "What's the weather in Paris?" }],
+        tools: [
+          {
+            name: "get_weather",
+            description: "Get the current weather for a city.",
+            parameters: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+              additionalProperties: false,
+            },
+          },
+        ],
+        toolChoice: { name: "get_weather" },
+        maxTokens: 256,
+      });
+
+      expect(result.finishReason).toBe("tool_use");
+      expect(result.toolCalls?.[0]?.name).toBe("get_weather");
+      console.log("Tool call:", JSON.stringify(result.toolCalls));
+    },
+    TIMEOUT_MS,
+  );
 });

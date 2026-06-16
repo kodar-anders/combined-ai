@@ -19,6 +19,11 @@ export type {
   ResponseFormat,
   Role,
   TextPart,
+  ToolCall,
+  ToolChoice,
+  ToolDefinition,
+  ToolResultPart,
+  ToolUsePart,
   Usage,
 } from "./types";
 

@@ -109,6 +109,14 @@ export class ProviderRegistry {
     }));
 
     const strategy = request.strategy ?? "consensus";
+    // No combine strategy does tool calling (a multi-model tool loop has no
+    // coherent shared state), and `completionFor` doesn't forward these — so
+    // reject them loudly instead of silently ignoring a tools-bearing request.
+    if (request.tools !== undefined || request.toolChoice !== undefined) {
+      throw new Error(
+        "combine does not support tool calling (tools/toolChoice); use registry.select() for a single-provider tool loop.",
+      );
+    }
     // `responseFormat` only means something for the ensemble strategy (where every
     // participant answers under the schema). For the prose strategies it would be
     // silently ignored, so reject it loudly instead.

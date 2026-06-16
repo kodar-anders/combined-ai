@@ -4,6 +4,8 @@
  */
 
 import { apiError, apiErrorFromBody } from "../errors";
+import { extractModel, isRecord } from "./extract";
+import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
@@ -15,6 +17,8 @@ import {
   type Message,
   type Provider,
   type Role,
+  type ToolCall,
+  type ToolChoice,
   type Usage,
 } from "../types";
 
@@ -86,6 +90,7 @@ export class AnthropicProvider implements Provider {
       refusal: extractRefusal(data),
       usage: extractUsage(data),
       parsed: parseStructured(request, text),
+      toolCalls: extractToolCalls(data),
     };
   }
 
@@ -114,62 +119,23 @@ export class AnthropicProvider implements Provider {
       throw new Error("Anthropic streaming response had no body");
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      let result = await reader.read();
-      while (!result.done) {
-        buffer += decoder.decode(result.value as Uint8Array, { stream: true });
-
-        for (
-          let nl = buffer.indexOf("\n");
-          nl !== -1;
-          nl = buffer.indexOf("\n")
-        ) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-
-          if (!line.startsWith("data:")) {
-            continue;
-          }
-          const payload = line.slice("data:".length).trim();
-          if (payload === "") {
-            continue;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-          if (!isRecord(parsed)) {
-            continue;
-          }
-
-          if (parsed.type === "message_stop") {
-            return;
-          }
-          if (parsed.type === "error") {
-            throw new Error(`Anthropic stream error: ${payload}`);
-          }
-          if (parsed.type === "content_block_delta") {
-            const delta = parsed.delta;
-            if (
-              isRecord(delta) &&
-              delta.type === "text_delta" &&
-              typeof delta.text === "string"
-            ) {
-              yield delta.text;
-            }
-          }
-        }
-
-        result = await reader.read();
+    for await (const event of sseJson(response.body)) {
+      if (event.type === "message_stop") {
+        return;
       }
-    } finally {
-      await reader.cancel();
+      if (event.type === "error") {
+        throw new Error(`Anthropic stream error: ${JSON.stringify(event)}`);
+      }
+      if (event.type === "content_block_delta") {
+        const delta = event.delta;
+        if (
+          isRecord(delta) &&
+          delta.type === "text_delta" &&
+          typeof delta.text === "string"
+        ) {
+          yield delta.text;
+        }
+      }
     }
   }
 
@@ -202,11 +168,30 @@ export class AnthropicProvider implements Provider {
         format: { type: "json_schema", schema: request.responseFormat.schema },
       };
     }
+    if (request.tools !== undefined) {
+      body.tools = request.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.parameters,
+      }));
+    }
+    if (request.toolChoice !== undefined) {
+      body.tool_choice = toAnthropicToolChoice(request.toolChoice);
+    }
     if (stream) {
       body.stream = true;
     }
     return body;
   }
+}
+
+/** Map the provider-agnostic tool choice onto Anthropic's `tool_choice`. */
+function toAnthropicToolChoice(choice: ToolChoice): Record<string, unknown> {
+  if (typeof choice === "object") {
+    return { type: "tool", name: choice.name };
+  }
+  // "auto" | "any" | "none" map to Anthropic's own type names directly.
+  return { type: choice };
 }
 
 type AnthropicSource =
@@ -216,7 +201,19 @@ type AnthropicSource =
 type AnthropicBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: AnthropicSource }
-  | { type: "document"; source: AnthropicSource };
+  | { type: "document"; source: AnthropicSource }
+  | {
+      type: "tool_use";
+      id?: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: "tool_result";
+      tool_use_id?: string;
+      content: string;
+      is_error?: boolean;
+    };
 
 /**
  * Map a message onto Anthropic's wire shape. A bare-`string` content is sent
@@ -231,10 +228,13 @@ function toAnthropicMessage(message: Message): {
   if (typeof message.content === "string") {
     return { role: message.role, content: message.content };
   }
-  return {
-    role: message.role,
-    content: message.content.map((part) => toAnthropicBlock(part)),
-  };
+  const blocks = message.content.map((part) => toAnthropicBlock(part));
+  // Anthropic requires tool_result blocks to come first in a user turn, so hoist
+  // them ahead of any text the caller placed before them (a no-op when there are
+  // none). Relative order within each group is preserved.
+  const toolResults = blocks.filter((b) => b.type === "tool_result");
+  const rest = blocks.filter((b) => b.type !== "tool_result");
+  return { role: message.role, content: [...toolResults, ...rest] };
 }
 
 function toAnthropicBlock(part: ContentPart): AnthropicBlock {
@@ -245,6 +245,23 @@ function toAnthropicBlock(part: ContentPart): AnthropicBlock {
       return { type: "image", source: toAnthropicSource(part.source) };
     case "file":
       return { type: "document", source: toAnthropicSource(part.source) };
+    case "tool_use":
+      return {
+        type: "tool_use",
+        id: part.id,
+        name: part.name,
+        input: part.input,
+      };
+    case "tool_result":
+      // Anthropic wants tool_result blocks first in the user turn; the caller is
+      // responsible for ordering (the low-level protocol puts them in their own
+      // message). is_error is omitted unless set.
+      return {
+        type: "tool_result",
+        tool_use_id: part.toolUseId,
+        content: part.content,
+        ...(part.isError === undefined ? {} : { is_error: part.isError }),
+      };
   }
 }
 
@@ -252,10 +269,6 @@ function toAnthropicSource(source: MediaSource): AnthropicSource {
   return source.kind === "base64"
     ? { type: "base64", media_type: source.mediaType, data: source.data }
     : { type: "url", url: source.url };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function toArray(value: unknown): unknown[] {
@@ -277,11 +290,24 @@ function extractText(data: unknown): string {
   return text;
 }
 
-function extractModel(data: unknown, fallback: string): string {
-  if (isRecord(data) && typeof data.model === "string") {
-    return data.model;
+/** Collect any `tool_use` content blocks as provider-agnostic tool calls. */
+function extractToolCalls(data: unknown): ToolCall[] | undefined {
+  const content = isRecord(data) ? toArray(data.content) : [];
+  const calls: ToolCall[] = [];
+  for (const block of content) {
+    if (
+      isRecord(block) &&
+      block.type === "tool_use" &&
+      typeof block.name === "string"
+    ) {
+      calls.push({
+        id: typeof block.id === "string" ? block.id : undefined,
+        name: block.name,
+        input: isRecord(block.input) ? block.input : {},
+      });
+    }
   }
-  return fallback;
+  return calls.length > 0 ? calls : undefined;
 }
 
 function extractFinishReason(data: unknown): string | undefined {
@@ -305,6 +331,8 @@ function normalizeFinishReason(
       return "length";
     case "refusal":
       return "content_filter";
+    case "tool_use":
+      return "tool_use";
     default:
       return "other";
   }
