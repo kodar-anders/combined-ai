@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-17
+
 Initial release: a plain TypeScript library that unifies the Anthropic, OpenAI,
 and Google (Gemini) APIs behind one provider-agnostic contract, talking to each
 HTTP API directly over `fetch` (no SDK dependencies), and adds strategies for
@@ -81,7 +83,7 @@ combining several providers on one prompt.
   varies — OpenAI's Chat Completions has no URL file source and throws a clear
   error.
 - **Structured output**: `CompletionRequest.responseFormat?` (`{ type: "json_schema",
-  schema, name? }`) constrains output to a raw JSON Schema (no Zod), mapped to each
+schema, name? }`) constrains output to a raw JSON Schema (no Zod), mapped to each
   provider's native mechanism. `complete()` also surfaces the parsed value on
   `CompletionResult.parsed`. For one schema to work across all three, set
   `additionalProperties: false` and list every property in `required`.
