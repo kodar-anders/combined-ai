@@ -45,6 +45,7 @@ export {
 } from "./registry";
 
 export type {
+  BroadcastResult,
   CombineEvent,
   CombineOptions,
   CombineRequest,

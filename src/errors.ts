@@ -92,6 +92,21 @@ export function apiErrorFromBody(
 }
 
 /**
+ * Build the error for a batch operation that produced no usable result. When some
+ * sub-operations actually failed, their errors are attached as an
+ * {@link AggregateError} (`.errors`) so the caller can inspect each underlying
+ * cause; when `causes` is empty (the batch yielded nothing usable but nothing
+ * threw), a plain {@link Error} is returned. `message` is preserved on both, so
+ * message-based assertions hold either way. Provider/feature-agnostic — the caller
+ * supplies the causes it collected.
+ */
+export function aggregateError(message: string, causes: Error[]): Error {
+  return causes.length > 0
+    ? new AggregateError(causes, message)
+    : new Error(message);
+}
+
+/**
  * Pull a machine `code`/`type` out of an error body across the three vendors'
  * shapes: all nest the detail under `error`; the human code is OpenAI's
  * `error.code` (a string — Gemini's `code` is the numeric HTTP status, so it's

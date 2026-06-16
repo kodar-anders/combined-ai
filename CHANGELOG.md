@@ -9,6 +9,26 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- Fourth combine strategy, **broadcast** (`strategy: "broadcast"`) — fan one
+  prompt out to every participant in parallel and return **all** of their raw
+  answers, with no critique, synthesis, or vote (it deliberately does not
+  combine). Each model answers the prompt verbatim (no shaped framing). The
+  result (`BroadcastResult`, exported) carries `responses` (one outcome per
+  participant, in participant order, including failures) and `usage`, but **no
+  `text`** — there is no single combined answer, so narrow on `result.strategy`
+  before reading `text` on a `CombineResult`. Fails only when every participant
+  fails (one or more failures are recorded and the successes are still returned;
+  an empty-text answer still counts as a success). Reuses the `response` progress
+  event. `responseFormat` is rejected for broadcast (structured output is the
+  ensemble strategy's job), and the consensus-only options (`synthesizer`,
+  `attribution`, `minParticipants`) are ignored.
+- Combine "no usable result" errors now carry their causes. When every
+  participant fails, the error a strategy throws (consensus, pipeline, ensemble,
+  broadcast) is an `AggregateError` whose `.errors` are the participants' own
+  errors (e.g. each `ProviderError` with its `status`/`kind`), so a caller can see
+  _why_ the run failed instead of a flat message. When participants succeeded but
+  produced nothing usable (all empty/non-object), a plain `Error` is thrown as
+  before. Messages are unchanged.
 - Per-participant models in `combine()`. A participant can now be an object —
   `{ provider, model?, maxTokens?, label? }` — instead of a bare provider name, so
   one combine can mix cheap drafters with a strong synthesizer, or run the **same

@@ -13,7 +13,12 @@ import {
 } from "../types";
 
 /** The cooperation strategies the registry knows how to run. */
-export const STRATEGY_NAMES = ["consensus", "pipeline", "ensemble"] as const;
+export const STRATEGY_NAMES = [
+  "consensus",
+  "pipeline",
+  "ensemble",
+  "broadcast",
+] as const;
 
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
 
@@ -176,18 +181,38 @@ export type EnsembleResult = {
 };
 
 /**
- * The result of a combine, discriminated on `strategy`. Narrow on
- * `result.strategy` to reach the strategy-specific artifacts.
+ * The result of the `broadcast` strategy (fan-out to every participant in
+ * parallel, no cooperation). There is no single combined answer — hence no
+ * `text` field — just every participant's raw response. Narrow on
+ * `result.strategy` to reach `responses`.
  */
-export type CombineResult = ConsensusResult | PipelineResult | EnsembleResult;
+export type BroadcastResult = {
+  strategy: "broadcast";
+  /** Each participant's raw completion, in participant order (includes failures). */
+  responses: ParticipantOutcome[];
+  /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
+  usage?: CombineUsage;
+};
+
+/**
+ * The result of a combine, discriminated on `strategy`. Narrow on
+ * `result.strategy` to reach the strategy-specific artifacts. Note that
+ * `BroadcastResult` has no `text` (it returns every raw response, not one answer).
+ */
+export type CombineResult =
+  | ConsensusResult
+  | PipelineResult
+  | EnsembleResult
+  | BroadcastResult;
 
 /**
  * A progress event emitted while a combine runs. For `consensus`, `phase` marks
  * a phase boundary and `draft`/`critique` fire as each participant's call settles
  * (in completion order, which may differ from participant order). For `pipeline`,
- * a `stage` event fires as each stage settles (in conveyor order). For `ensemble`,
- * a `response` event fires as each participant's structured answer settles. The
- * final answer is the resolved {@link CombineResult}, so there is no terminal event.
+ * a `stage` event fires as each stage settles (in conveyor order). For `ensemble`
+ * and `broadcast`, a `response` event fires as each participant settles (in
+ * completion order, which may differ from participant order). The final answer is
+ * the resolved {@link CombineResult}, so there is no terminal event.
  */
 export type CombineEvent =
   | { type: "phase"; phase: "drafting" | "critiquing" | "synthesizing" }
@@ -212,6 +237,7 @@ export type CombineEvent =
       index: number;
     }
   | {
+      /** A participant settled in an `ensemble` or `broadcast` run. */
       type: "response";
       id: string;
       provider: ProviderName;

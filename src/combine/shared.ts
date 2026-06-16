@@ -10,6 +10,7 @@ import {
   type CombineUsage,
   type ParticipantOutcome,
 } from "./index";
+import { aggregateError } from "../errors";
 import { type ProviderName } from "../registry";
 import {
   type CompletionRequest,
@@ -136,6 +137,56 @@ export async function runOutcome(
       error: error instanceof Error ? error : new Error(String(error)),
     };
   }
+}
+
+/**
+ * Run every participant against the **verbatim** prompt (the caller's own
+ * `system` + `messages`, with no shaped framing) in parallel, capturing each as a
+ * {@link ParticipantOutcome} and emitting a `response` event as it settles. Shared
+ * by the fan-out strategies (`ensemble`, `broadcast`); each strategy keeps its own
+ * accept/throw policy on the returned outcomes. Per-participant model/maxTokens
+ * overrides and the abort `signal` thread through {@link completionFor}.
+ */
+export async function respondAll(
+  roster: RosterEntry[],
+  request: CombineRequest,
+  emit: (event: CombineEvent) => void,
+): Promise<ParticipantOutcome[]> {
+  return Promise.all(
+    roster.map(async (entry) => {
+      const outcome = await runOutcome(entry.id, entry.providerName, () =>
+        entry.provider.complete(
+          completionFor(request, request.system, request.messages, entry),
+        ),
+      );
+      emit({
+        type: "response",
+        id: entry.id,
+        provider: entry.providerName,
+        status: outcome.status,
+      });
+      return outcome;
+    }),
+  );
+}
+
+/**
+ * Build the error a strategy throws when no participant produced a usable result.
+ * The combine-specific adapter over {@link aggregateError}: it collects the failed
+ * participants' own errors (each a `ProviderError` with status/kind/abort cause)
+ * so the thrown error carries them as `.errors` when any participant failed, and
+ * degrades to a plain `Error` when every participant succeeded but none was usable
+ * (e.g. all empty or non-object). The `message` is preserved either way, so
+ * existing `toThrow(...)` assertions still pass.
+ */
+export function noResultError(
+  message: string,
+  outcomes: ParticipantOutcome[],
+): Error {
+  return aggregateError(
+    message,
+    outcomes.flatMap((o) => (o.status === "failed" ? [o.error] : [])),
+  );
 }
 
 /**

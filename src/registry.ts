@@ -14,6 +14,7 @@ import {
   type ParticipantSpec,
   STRATEGY_NAMES,
 } from "./combine";
+import { broadcast } from "./combine/broadcast";
 import { consensus } from "./combine/consensus";
 import { ensemble } from "./combine/ensemble";
 import { pipeline } from "./combine/pipeline";
@@ -144,9 +145,11 @@ export class ProviderRegistry {
   /**
    * Combine several configured providers to cooperate on one prompt using a
    * cooperation strategy — `consensus` (draft → critique → synthesize),
-   * `pipeline` (sequential refinement), or `ensemble` (each participant answers
+   * `pipeline` (sequential refinement), `ensemble` (each participant answers
    * under a shared JSON Schema, then the typed objects are merged field-wise with
-   * an agreement score; requires `responseFormat`). Participants are picked by
+   * an agreement score; requires `responseFormat`), or `broadcast` (fan out to
+   * every participant and return all raw responses, with no synthesis or vote).
+   * Participants are picked by
    * name and validated like {@link ProviderRegistry.select}. Strategy-specific
    * options (`synthesizer`, `minParticipants`, `attribution`, `responseFormat`)
    * are validated and applied only by the strategy that uses them.
@@ -234,6 +237,8 @@ export class ProviderRegistry {
         }
         return ensemble(roster, request, options?.onEvent);
       }
+      case "broadcast":
+        return broadcast(roster, request, options?.onEvent);
       default: {
         const unreachable: never = strategy;
         throw new Error(`Unhandled combine strategy "${String(unreachable)}"`);

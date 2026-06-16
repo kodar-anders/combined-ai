@@ -31,11 +31,11 @@ import {
 } from "./index";
 import {
   aggregateUsage,
-  completionFor,
   makeEmitter,
+  noResultError,
   outcomeUsage,
+  respondAll,
   type RosterEntry,
-  runOutcome,
 } from "./shared";
 
 /**
@@ -51,24 +51,9 @@ export async function ensemble(
   const emit = makeEmitter(onEvent);
 
   // Every participant answers the same prompt under the same schema, in parallel.
-  // completionFor carries responseFormat through, so each provider returns a
-  // parsed object on its result.
-  const responses = await Promise.all(
-    roster.map(async (entry) => {
-      const outcome = await runOutcome(entry.id, entry.providerName, () =>
-        entry.provider.complete(
-          completionFor(request, request.system, request.messages, entry),
-        ),
-      );
-      emit({
-        type: "response",
-        id: entry.id,
-        provider: entry.providerName,
-        status: outcome.status,
-      });
-      return outcome;
-    }),
-  );
+  // completionFor (inside respondAll) carries responseFormat through, so each
+  // provider returns a parsed object on its result.
+  const responses = await respondAll(roster, request, emit);
 
   // A response counts toward the merge only if it succeeded and parsed into a
   // plain object (the schema's shape); a failed call, an empty/invalid-JSON
@@ -81,8 +66,9 @@ export async function ensemble(
   );
 
   if (objects.length === 0) {
-    throw new Error(
+    throw noResultError(
       "Ensemble failed: no participant returned a valid structured object.",
+      responses,
     );
   }
 
