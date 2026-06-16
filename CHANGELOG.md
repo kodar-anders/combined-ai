@@ -9,6 +9,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **Per-strategy combine methods and precise `combine()` typing.** The registry
+  now exposes `consensus()`, `pipeline()`, `ensemble()`, and `broadcast()`
+  alongside `combine()`. Each takes that strategy's request type — `ConsensusRequest`,
+  `PipelineRequest`, `EnsembleRequest` (with `responseFormat` **required**),
+  `BroadcastRequest` (all exported) — and returns its **concrete** result, so you
+  no longer narrow a `CombineResult` union when the strategy is known. `combine()`
+  is now generic over the strategy: a literal `strategy` returns the concrete
+  result type too (the result type is inferred from `strategy`), while a
+  runtime/dynamic `strategy` still returns the full union to narrow. Both paths
+  share one validation/execution engine, so behavior is unchanged. Also
+  exports the strategy-generic utility types `StrategyRequest<S>` and
+  `ResultFor<S>`, and `CombineRequestBase`.
 - Fourth combine strategy, **broadcast** (`strategy: "broadcast"`) — fan one
   prompt out to every participant in parallel and return **all** of their raw
   answers, with no critique, synthesis, or vote (it deliberately does not

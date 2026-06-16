@@ -431,9 +431,7 @@ describe("ProviderRegistry.combine", () => {
     // Two stages on the one provider, each with its own model override; labels are
     // auto-derived as `<provider>-<model>`, so they don't collide.
     expect(calls.map((c) => c.model)).toEqual(["fast", "smart"]);
-    if (result.strategy !== "pipeline") {
-      throw new Error(`expected a pipeline result, got "${result.strategy}"`);
-    }
+    // `combine({ strategy: "pipeline" })` is typed `PipelineResult` — no narrowing.
     expect(result.finalParticipant).toBe("mine-smart");
   });
 
@@ -459,9 +457,7 @@ describe("ProviderRegistry.combine", () => {
       ],
     });
 
-    if (result.strategy !== "broadcast") {
-      throw new Error(`expected a broadcast result, got "${result.strategy}"`);
-    }
+    // `combine({ strategy: "broadcast" })` is typed `BroadcastResult` — no narrowing.
     expect(result.responses.map((o) => o.id)).toEqual([
       "mine-fast",
       "mine-smart",
@@ -469,5 +465,76 @@ describe("ProviderRegistry.combine", () => {
     expect(
       result.responses.map((o) => (o.status === "ok" ? o.result.text : null)),
     ).toEqual(["fast says hi", "smart says hi"]);
+  });
+});
+
+describe("ProviderRegistry per-strategy methods", () => {
+  const echo: Provider = {
+    name: "mine",
+    complete: (req: CompletionRequest): Promise<CompletionResult> =>
+      Promise.resolve({ text: `${req.model ?? "?"} says hi`, model: "m" }),
+    stream: () => {
+      throw new Error("stream not used in this test");
+    },
+  };
+
+  it("broadcast() returns a typed BroadcastResult without narrowing", async () => {
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    // The method's return type is BroadcastResult, so `responses` is reachable
+    // without narrowing a union.
+    const result = await registry.broadcast({
+      ...PROMPT,
+      participants: [
+        { provider: "mine", model: "fast" },
+        { provider: "mine", model: "smart" },
+      ],
+    });
+
+    expect(result.strategy).toBe("broadcast");
+    expect(result.responses.map((o) => o.id)).toEqual([
+      "mine-fast",
+      "mine-smart",
+    ]);
+  });
+
+  it("pipeline() returns a typed PipelineResult and runs each stage's model", async () => {
+    const calls: CompletionRequest[] = [];
+    const echoModel: Provider = {
+      name: "mine",
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        return Promise.resolve({ text: "answer", model: request.model ?? "?" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echoModel } },
+    });
+
+    const result = await registry.pipeline({
+      ...PROMPT,
+      participants: [
+        { provider: "mine", model: "fast" },
+        { provider: "mine", model: "smart" },
+      ],
+    });
+
+    expect(calls.map((c) => c.model)).toEqual(["fast", "smart"]);
+    expect(result.finalParticipant).toBe("mine-smart");
+  });
+
+  it("shares the cross-cutting validation (e.g. rejects an empty roster)", async () => {
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    await expect(
+      registry.pipeline({ ...PROMPT, participants: [] }),
+    ).rejects.toThrow(/at least one participant/);
   });
 });
