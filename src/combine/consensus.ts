@@ -19,6 +19,7 @@ import {
   composeSystem,
   completionFor,
   makeEmitter,
+  noResultError,
   outcomeUsage,
   renderConversation,
   type RosterEntry,
@@ -126,7 +127,10 @@ export async function consensus(
 
   const [firstSurvivor] = survivors;
   if (firstSurvivor === undefined) {
-    throw new Error("Consensus failed: no participant produced a draft.");
+    throw noResultError(
+      "Consensus failed: no participant produced a draft.",
+      drafts,
+    );
   }
   // A single-provider combine is just that provider answering.
   if (roster.length === 1) {
@@ -141,10 +145,11 @@ export async function consensus(
     };
   }
   if (survivors.length < minParticipants) {
-    throw new Error(
+    throw noResultError(
       `Consensus failed: only ${String(survivors.length)} of ` +
         `${String(roster.length)} participants produced a draft ` +
         `(minimum ${String(minParticipants)}).`,
+      drafts,
     );
   }
 

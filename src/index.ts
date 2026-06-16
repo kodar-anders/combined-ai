@@ -45,16 +45,24 @@ export {
 } from "./registry";
 
 export type {
+  BroadcastRequest,
+  BroadcastResult,
   CombineEvent,
   CombineOptions,
   CombineRequest,
+  CombineRequestBase,
   CombineResult,
   CombineUsage,
+  ConsensusRequest,
   ConsensusResult,
   EnsembleAgreement,
+  EnsembleRequest,
   EnsembleResult,
   ParticipantOutcome,
   ParticipantSpec,
+  PipelineRequest,
   PipelineResult,
+  ResultFor,
   StrategyName,
+  StrategyRequest,
 } from "./combine";

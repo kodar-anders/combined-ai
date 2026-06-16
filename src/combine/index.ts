@@ -9,11 +9,17 @@ import { type ProviderName } from "../registry";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type ResponseFormat,
   type Usage,
 } from "../types";
 
 /** The cooperation strategies the registry knows how to run. */
-export const STRATEGY_NAMES = ["consensus", "pipeline", "ensemble"] as const;
+export const STRATEGY_NAMES = [
+  "consensus",
+  "pipeline",
+  "ensemble",
+  "broadcast",
+] as const;
 
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
 
@@ -41,7 +47,14 @@ export type ParticipantSpec =
       label?: string;
     };
 
-export type CombineRequest = CompletionRequest & {
+/**
+ * The fields every combine strategy's request shares: the underlying
+ * {@link CompletionRequest} (messages, model, maxTokens, system, signal, …) plus
+ * the roster of participants. The per-strategy request types
+ * ({@link ConsensusRequest}, {@link PipelineRequest}, {@link EnsembleRequest},
+ * {@link BroadcastRequest}) extend this with only the options that strategy uses.
+ */
+export type CombineRequestBase = CompletionRequest & {
   /**
    * Who participates. A bare provider name uses its configured default model; the
    * object form ({@link ParticipantSpec}) overrides model/maxTokens per participant.
@@ -49,32 +62,74 @@ export type CombineRequest = CompletionRequest & {
    * the registry.
    */
   participants: ParticipantSpec[];
+};
+
+/**
+ * Request for the `consensus` strategy (draft → critique → synthesize). Call
+ * {@link ProviderRegistry.consensus} directly, or pass `strategy: "consensus"`
+ * (the default) to {@link ProviderRegistry.combine}.
+ */
+export type ConsensusRequest = CombineRequestBase & {
   /**
-   * **Consensus only.** Which participant writes the final synthesized answer,
-   * referenced by its **id** (see {@link ParticipantSpec.label}). Defaults to the
-   * first participant. Ignored by the `pipeline` strategy, where the last
-   * successful stage produces the answer.
+   * Which participant writes the final synthesized answer, referenced by its
+   * **id** (see {@link ParticipantSpec.label}). Defaults to the first participant.
    */
   synthesizer?: string;
-  /** Cooperation strategy. Defaults to `"consensus"`. */
-  strategy?: StrategyName;
   /**
-   * **Consensus only.** Whether drafts are attributed to their provider in the
-   * text shown to the other providers. `"anonymized"` (default) shows
-   * `Answer A`/`Answer B`/… to neutralize brand and self-preference bias;
-   * `"attributed"` shows provider names. The returned {@link CombineResult}
-   * always keeps provider names regardless of this setting. Ignored by the
-   * `pipeline` strategy, which passes a single unlabelled running answer along.
+   * Whether drafts are attributed to their provider in the text shown to the
+   * other providers. `"anonymized"` (default) shows `Answer A`/`Answer B`/… to
+   * neutralize brand and self-preference bias; `"attributed"` shows participant
+   * ids. The returned {@link ConsensusResult} always keeps ids regardless.
    */
   attribution?: "attributed" | "anonymized";
   /**
-   * **Consensus only.** Minimum number of participants that must successfully
-   * produce a draft for a consensus run to proceed. Defaults to 2. A
-   * single-provider combine always degrades to a plain completion regardless of
-   * this value. Ignored by the `pipeline` strategy, which returns whatever the
-   * best surviving stage produced (it needs only one stage to succeed).
+   * Minimum number of participants that must successfully produce a draft for a
+   * consensus run to proceed. Defaults to 2. A single-provider combine always
+   * degrades to a plain completion regardless of this value.
    */
   minParticipants?: number;
+};
+
+/**
+ * Request for the `pipeline` strategy (sequential refinement). Call
+ * {@link ProviderRegistry.pipeline} directly, or pass `strategy: "pipeline"` to
+ * {@link ProviderRegistry.combine}. No strategy-specific options — participant
+ * order is the conveyor order.
+ */
+export type PipelineRequest = CombineRequestBase;
+
+/**
+ * Request for the `ensemble` strategy (multi-model vote on structured output).
+ * Call {@link ProviderRegistry.ensemble} directly, or pass `strategy: "ensemble"`
+ * to {@link ProviderRegistry.combine}. `responseFormat` is **required** (every
+ * participant answers under this schema, and the field-wise vote needs an
+ * object-root schema).
+ */
+export type EnsembleRequest = CombineRequestBase & {
+  responseFormat: ResponseFormat;
+};
+
+/**
+ * Request for the `broadcast` strategy (fan-out, no combine). Call
+ * {@link ProviderRegistry.broadcast} directly, or pass `strategy: "broadcast"` to
+ * {@link ProviderRegistry.combine}. No strategy-specific options.
+ */
+export type BroadcastRequest = CombineRequestBase;
+
+/**
+ * The broad request accepted by the strategy-dispatching
+ * {@link ProviderRegistry.combine}: {@link CombineRequestBase} plus every
+ * strategy's options and the `strategy` selector. Today only consensus adds
+ * options, so this is {@link ConsensusRequest} plus `strategy` (each strategy
+ * reads only the options it uses; `responseFormat` stays optional here, inherited
+ * from {@link CompletionRequest}). Prefer a per-strategy method
+ * ({@link ProviderRegistry.consensus} etc.) when the strategy is known at the
+ * call site — they take the precise {@link ConsensusRequest}/… type and return
+ * the concrete result without narrowing.
+ */
+export type CombineRequest = ConsensusRequest & {
+  /** Cooperation strategy. Defaults to `"consensus"`. */
+  strategy?: StrategyName;
 };
 
 /**
@@ -176,18 +231,60 @@ export type EnsembleResult = {
 };
 
 /**
- * The result of a combine, discriminated on `strategy`. Narrow on
- * `result.strategy` to reach the strategy-specific artifacts.
+ * The result of the `broadcast` strategy (fan-out to every participant in
+ * parallel, no cooperation). There is no single combined answer — hence no
+ * `text` field — just every participant's raw response. Narrow on
+ * `result.strategy` to reach `responses`.
  */
-export type CombineResult = ConsensusResult | PipelineResult | EnsembleResult;
+export type BroadcastResult = {
+  strategy: "broadcast";
+  /** Each participant's raw completion, in participant order (includes failures). */
+  responses: ParticipantOutcome[];
+  /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
+  usage?: CombineUsage;
+};
+
+/**
+ * The result of a combine, discriminated on `strategy`. Narrow on
+ * `result.strategy` to reach the strategy-specific artifacts. Note that
+ * `BroadcastResult` has no `text` (it returns every raw response, not one answer).
+ */
+export type CombineResult =
+  | ConsensusResult
+  | PipelineResult
+  | EnsembleResult
+  | BroadcastResult;
+
+/**
+ * Maps a strategy name to its request type — e.g. `StrategyRequest<"ensemble">`
+ * is {@link EnsembleRequest}. A utility for callers writing code generic over the
+ * strategy.
+ */
+export type StrategyRequest<S extends StrategyName> = {
+  consensus: ConsensusRequest;
+  pipeline: PipelineRequest;
+  ensemble: EnsembleRequest;
+  broadcast: BroadcastRequest;
+}[S];
+
+/**
+ * Maps a strategy name to its concrete result type — e.g.
+ * `ResultFor<"ensemble">` is {@link EnsembleResult}. A utility for callers
+ * writing code generic over the strategy.
+ */
+export type ResultFor<S extends StrategyName> = Extract<
+  CombineResult,
+  { strategy: S }
+>;
 
 /**
  * A progress event emitted while a combine runs. For `consensus`, `phase` marks
  * a phase boundary and `draft`/`critique` fire as each participant's call settles
  * (in completion order, which may differ from participant order). For `pipeline`,
- * a `stage` event fires as each stage settles (in conveyor order). For `ensemble`,
- * a `response` event fires as each participant's structured answer settles. The
- * final answer is the resolved {@link CombineResult}, so there is no terminal event.
+ * a `stage` event fires as each stage settles (in conveyor order). For `ensemble`
+ * and `broadcast`, a `response` event fires as each participant settles (in
+ * completion order, which may differ from participant order). The final answer is
+ * the resolved {@link CombineResult}, so there is no terminal event.
  */
 export type CombineEvent =
   | { type: "phase"; phase: "drafting" | "critiquing" | "synthesizing" }
@@ -212,6 +309,7 @@ export type CombineEvent =
       index: number;
     }
   | {
+      /** A participant settled in an `ensemble` or `broadcast` run. */
       type: "response";
       id: string;
       provider: ProviderName;

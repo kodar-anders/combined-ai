@@ -26,6 +26,7 @@ import {
   composeSystem,
   completionFor,
   makeEmitter,
+  noResultError,
   outcomeUsage,
   renderConversation,
   type RosterEntry,
@@ -145,7 +146,10 @@ export async function pipeline(
   }
 
   if (current === undefined) {
-    throw new Error("Pipeline failed: no participant produced an answer.");
+    throw noResultError(
+      "Pipeline failed: no participant produced an answer.",
+      stages,
+    );
   }
 
   // Strip any process narration a refining stage may have leaked. Skipped when

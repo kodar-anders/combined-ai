@@ -8,15 +8,27 @@
  */
 
 import {
+  type BroadcastRequest,
+  type BroadcastResult,
   type CombineOptions,
   type CombineRequest,
+  type CombineRequestBase,
   type CombineResult,
+  type ConsensusRequest,
+  type ConsensusResult,
+  type EnsembleRequest,
+  type EnsembleResult,
   type ParticipantSpec,
+  type PipelineRequest,
+  type PipelineResult,
+  type ResultFor,
+  type StrategyName,
   STRATEGY_NAMES,
 } from "./combine";
-import { consensus } from "./combine/consensus";
-import { ensemble } from "./combine/ensemble";
-import { pipeline } from "./combine/pipeline";
+import { broadcast as runBroadcast } from "./combine/broadcast";
+import { consensus as runConsensus } from "./combine/consensus";
+import { ensemble as runEnsemble } from "./combine/ensemble";
+import { pipeline as runPipeline } from "./combine/pipeline";
 import { type RosterEntry } from "./combine/shared";
 import {
   AnthropicProvider,
@@ -142,19 +154,140 @@ export class ProviderRegistry {
   }
 
   /**
-   * Combine several configured providers to cooperate on one prompt using a
-   * cooperation strategy — `consensus` (draft → critique → synthesize),
-   * `pipeline` (sequential refinement), or `ensemble` (each participant answers
-   * under a shared JSON Schema, then the typed objects are merged field-wise with
-   * an agreement score; requires `responseFormat`). Participants are picked by
-   * name and validated like {@link ProviderRegistry.select}. Strategy-specific
-   * options (`synthesizer`, `minParticipants`, `attribution`, `responseFormat`)
-   * are validated and applied only by the strategy that uses them.
+   * Combine several configured providers to cooperate on one prompt, dispatching
+   * on `request.strategy` (defaults to `"consensus"`).
+   *
+   * Generic over the strategy: `S` is inferred from the `strategy` field, so a
+   * **literal** `strategy` at the call site makes the return that strategy's
+   * concrete result (e.g. `strategy: "ensemble"` → `EnsembleResult`) — the caller
+   * does **not** narrow a union. When `strategy` is only known at runtime, `S`
+   * widens to {@link StrategyName} and the return is the full
+   * {@link CombineResult} union to narrow.
+   *
+   * The request stays the broad {@link CombineRequest} here; for compile-time
+   * enforcement of a strategy's specific options (e.g. `responseFormat` required
+   * for ensemble) call the per-strategy method ({@link ProviderRegistry.consensus},
+   * {@link ProviderRegistry.pipeline}, {@link ProviderRegistry.ensemble},
+   * {@link ProviderRegistry.broadcast}), which takes that strategy's request type.
    */
-  async combine(
-    request: CombineRequest,
+  async combine<S extends StrategyName = "consensus">(
+    request: Omit<CombineRequest, "strategy"> & { strategy?: S },
     options?: CombineOptions,
-  ): Promise<CombineResult> {
+  ): Promise<ResultFor<S>> {
+    const strategy: StrategyName = request.strategy ?? "consensus";
+    const knownStrategies: readonly string[] = STRATEGY_NAMES;
+    if (!knownStrategies.includes(strategy)) {
+      throw new Error(
+        `Unknown combine strategy "${strategy}". Known: ${STRATEGY_NAMES.join(", ")}`,
+      );
+    }
+    let result: CombineResult;
+    switch (strategy) {
+      case "consensus":
+        result = await this.consensus(request, options);
+        break;
+      case "pipeline":
+        result = await this.pipeline(request, options);
+        break;
+      case "ensemble":
+        // The request is the broad type here; the `ensemble` method re-checks
+        // responseFormat at runtime (it's required by EnsembleRequest's type).
+        result = await this.ensemble(request as EnsembleRequest, options);
+        break;
+      case "broadcast":
+        result = await this.broadcast(request, options);
+        break;
+      default: {
+        const unreachable: never = strategy;
+        throw new Error(`Unhandled combine strategy "${String(unreachable)}"`);
+      }
+    }
+    return result as ResultFor<S>;
+  }
+
+  /**
+   * Run the `consensus` strategy (draft → critique → synthesize) over the
+   * configured participants. Strategy-specific: `synthesizer` (defaults to the
+   * first participant), `attribution`, `minParticipants` (default 2).
+   */
+  async consensus(
+    request: ConsensusRequest,
+    options?: CombineOptions,
+  ): Promise<ConsensusResult> {
+    const { roster, ids, firstId } = this.#prepare(request);
+    this.#rejectResponseFormat(request, "consensus");
+    this.#validateConsensusOptions(request, ids);
+    const synthesizer = request.synthesizer ?? firstId;
+    return runConsensus(roster, synthesizer, request, options?.onEvent);
+  }
+
+  /**
+   * Run the `pipeline` strategy (sequential refinement) — participants refine a
+   * running answer in roster order; the last advancing stage wins.
+   */
+  async pipeline(
+    request: PipelineRequest,
+    options?: CombineOptions,
+  ): Promise<PipelineResult> {
+    const { roster } = this.#prepare(request);
+    this.#rejectResponseFormat(request, "pipeline");
+    return runPipeline(roster, request, options?.onEvent);
+  }
+
+  /**
+   * Run the `ensemble` strategy (multi-model vote on structured output) — every
+   * participant answers under `request.responseFormat`; the typed objects are
+   * merged field-wise by majority vote with a per-field agreement score.
+   */
+  async ensemble(
+    request: EnsembleRequest,
+    options?: CombineOptions,
+  ): Promise<EnsembleResult> {
+    const { roster } = this.#prepare(request);
+    // responseFormat is required by the type, but a JS caller (or the `combine`
+    // dispatcher's cast) can still omit it — re-check at runtime.
+    const { responseFormat } = request as CombineRequest;
+    if (responseFormat === undefined) {
+      throw new Error(
+        'The "ensemble" strategy requires a responseFormat (the JSON Schema every participant answers under).',
+      );
+    }
+    // The field-wise merge needs named fields, so the schema's root must be an
+    // object. Reject array/scalar roots up front with a clear error rather than
+    // failing opaquely after paying for every participant's call.
+    const rootType = responseFormat.schema.type;
+    if (typeof rootType === "string" && rootType !== "object") {
+      throw new Error(
+        `The "ensemble" strategy requires an object schema (its field-wise vote needs named fields); got a "${rootType}" schema.`,
+      );
+    }
+    return runEnsemble(roster, request, options?.onEvent);
+  }
+
+  /**
+   * Run the `broadcast` strategy (fan-out, no combine) — every participant
+   * answers the raw prompt in parallel; all raw responses are returned.
+   */
+  async broadcast(
+    request: BroadcastRequest,
+    options?: CombineOptions,
+  ): Promise<BroadcastResult> {
+    const { roster } = this.#prepare(request);
+    this.#rejectResponseFormat(request, "broadcast");
+    return runBroadcast(roster, request, options?.onEvent);
+  }
+
+  /**
+   * Shared combine validation: normalize the participant specs, enforce ≥1
+   * participant with unique ids, require ≥1 message, and reject tool calling
+   * (no strategy supports it). Returns the resolved roster, the participant ids,
+   * and the first participant's id (the default consensus synthesizer).
+   */
+  #prepare(request: CombineRequestBase): {
+    roster: RosterEntry[];
+    ids: string[];
+    firstId: string;
+  } {
     // Normalize each participant spec to its id + provider + per-participant
     // overrides. Two participants resolving to the same id (e.g. the same
     // provider+model twice without an explicit `label`) is rejected.
@@ -175,22 +308,6 @@ export class ProviderRegistry {
     if (request.messages.length === 0) {
       throw new Error("combine requires at least one message");
     }
-    const knownStrategies: readonly string[] = STRATEGY_NAMES;
-    if (
-      request.strategy !== undefined &&
-      !knownStrategies.includes(request.strategy)
-    ) {
-      throw new Error(
-        `Unknown combine strategy "${request.strategy}". Known: ${STRATEGY_NAMES.join(", ")}`,
-      );
-    }
-
-    const roster: RosterEntry[] = normalized.map((p) => ({
-      ...p,
-      provider: this.select(p.providerName),
-    }));
-
-    const strategy = request.strategy ?? "consensus";
     // No combine strategy does tool calling (a multi-model tool loop has no
     // coherent shared state), and `completionFor` doesn't forward these — so
     // reject them loudly instead of silently ignoring a tools-bearing request.
@@ -199,50 +316,31 @@ export class ProviderRegistry {
         "combine does not support tool calling (tools/toolChoice); use registry.select() for a single-provider tool loop.",
       );
     }
-    // `responseFormat` only means something for the ensemble strategy (where every
-    // participant answers under the schema). For the prose strategies it would be
-    // silently ignored, so reject it loudly instead.
-    if (strategy !== "ensemble" && request.responseFormat !== undefined) {
+    const roster: RosterEntry[] = normalized.map((p) => ({
+      ...p,
+      provider: this.select(p.providerName),
+    }));
+    return { roster, ids, firstId: first.id };
+  }
+
+  /**
+   * Reject `responseFormat` on a non-ensemble strategy. It only means something
+   * for ensemble (where every participant answers under the schema); on the prose
+   * strategies it would be silently forwarded, so reject it loudly instead.
+   */
+  #rejectResponseFormat(
+    request: CombineRequestBase,
+    strategy: StrategyName,
+  ): void {
+    if (request.responseFormat !== undefined) {
       throw new Error(
         `responseFormat is only supported by the "ensemble" strategy, not "${strategy}".`,
       );
     }
-    switch (strategy) {
-      // `synthesizer`/`minParticipants` are consensus-only, so they're validated
-      // here (not in the shared preamble) — pipeline ignores them entirely.
-      case "consensus": {
-        this.#validateConsensusOptions(request, ids);
-        const synthesizer = request.synthesizer ?? first.id;
-        return consensus(roster, synthesizer, request, options?.onEvent);
-      }
-      case "pipeline":
-        return pipeline(roster, request, options?.onEvent);
-      case "ensemble": {
-        if (request.responseFormat === undefined) {
-          throw new Error(
-            'The "ensemble" strategy requires a responseFormat (the JSON Schema every participant answers under).',
-          );
-        }
-        // The field-wise merge needs named fields, so the schema's root must be an
-        // object. Reject array/scalar roots up front with a clear error rather than
-        // failing opaquely after paying for every participant's call.
-        const rootType = request.responseFormat.schema.type;
-        if (typeof rootType === "string" && rootType !== "object") {
-          throw new Error(
-            `The "ensemble" strategy requires an object schema (its field-wise vote needs named fields); got a "${rootType}" schema.`,
-          );
-        }
-        return ensemble(roster, request, options?.onEvent);
-      }
-      default: {
-        const unreachable: never = strategy;
-        throw new Error(`Unhandled combine strategy "${String(unreachable)}"`);
-      }
-    }
   }
 
   /** Validate the consensus-only request options (`minParticipants`, `synthesizer`). */
-  #validateConsensusOptions(request: CombineRequest, ids: string[]): void {
+  #validateConsensusOptions(request: ConsensusRequest, ids: string[]): void {
     const { minParticipants } = request;
     if (minParticipants !== undefined) {
       if (!Number.isInteger(minParticipants) || minParticipants < 1) {

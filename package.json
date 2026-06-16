@@ -82,5 +82,5 @@
     "node": "24.14.0",
     "yarn": "4.16.0"
   },
-  "private": true
+  "private": false
 }

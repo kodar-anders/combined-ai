@@ -70,10 +70,8 @@ describeLive("ProviderRegistry.combine pipeline (live)", () => {
         },
       );
 
-      // `combine()` returns a strategy-discriminated union; narrow to pipeline.
-      if (result.strategy !== "pipeline") {
-        throw new Error(`expected a pipeline result, got "${result.strategy}"`);
-      }
+      // `combine({ strategy: "pipeline" })` returns a typed `PipelineResult` (no
+      // union narrowing needed) — `result.stages`/`finalParticipant` are in scope.
 
       // Surface the actual error behind any failed stage (e.g. Gemini).
       for (const stage of result.stages) {

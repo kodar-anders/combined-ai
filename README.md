@@ -4,12 +4,13 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933.svg)](https://nodejs.org/)
 
-**Multi-model consensus, pipeline, and ensemble for TypeScript.**
+**Multi-model consensus, pipeline, ensemble, and broadcast for TypeScript.**
 
 Most AI libraries hand you one model at a time. combined-ai makes several models
-**work together on a single prompt** — consensus, sequential refinement, or a
-vote on structured output — behind one tiny interface. Single-provider calls
-(`complete`/`stream`) are included too.
+**work together on a single prompt** — consensus, sequential refinement, a vote
+on structured output, or a plain fan-out that returns every model's answer —
+behind one tiny interface. Single-provider calls (`complete`/`stream`) are
+included too.
 
 ```ts
 import { ProviderRegistry } from "combined-ai";
@@ -38,6 +39,7 @@ console.log(result.text);
   - [Consensus](#consensus)
   - [Pipeline](#pipeline)
   - [Ensemble](#ensemble)
+  - [Broadcast](#broadcast)
   - [Per-participant models](#per-participant-models)
   - [Reading the result](#reading-the-result)
   - [Progress events](#progress-events)
@@ -59,16 +61,17 @@ console.log(result.text);
 ## Why combine?
 
 A single model gives you one answer with no second opinion. combined-ai runs
-several models on the same prompt and merges their work, with three strategies
-for three shapes of problem:
+several models on the same prompt, with four strategies for four shapes of
+problem:
 
 | Strategy      | Shape                                         | Use it when…                                                    |
 | ------------- | --------------------------------------------- | --------------------------------------------------------------- |
 | `"consensus"` | draft → critique → synthesize                 | you want one well-reasoned answer that survived peer review.    |
 | `"pipeline"`  | sequential refinement (a conveyor belt)       | each model should improve the previous one's answer in turn.    |
 | `"ensemble"`  | parallel structured answers → field-wise vote | you need extraction/classification **with a confidence score**. |
+| `"broadcast"` | parallel fan-out, every raw answer returned   | you want each model's answer side by side, with no combining.   |
 
-All three share one interface: configure a `ProviderRegistry`, then call
+All four share one interface: configure a `ProviderRegistry`, then call
 `registry.combine({ participants, messages, strategy })`. Participants can be
 different providers, or the **same provider with different models**.
 
@@ -110,17 +113,23 @@ const result = await registry.combine({
 `system`, `model`, `maxTokens`, `signal`) — they apply to every participant
 unless a participant overrides them — plus:
 
-| Field             | Type                                          | Notes                                                                                      |
-| ----------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `participants`    | `ParticipantSpec[]`                           | Required, non-empty. A bare `ProviderName`, or `{ provider, model?, maxTokens?, label? }`. |
-| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` | Optional. Defaults to `"consensus"`.                                                       |
-| `synthesizer`     | `string` (participant id)                     | _Consensus only._ Who writes the final answer. Defaults to the first participant.          |
-| `attribution`     | `"attributed"` \| `"anonymized"`              | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias.                      |
-| `minParticipants` | `number`                                      | _Consensus only._ Minimum drafts required to proceed (default 2).                          |
-| `responseFormat`  | `ResponseFormat`                              | _Ensemble only (required there)._ The shared JSON Schema every model answers under.        |
+| Field             | Type                                                           | Notes                                                                                      |
+| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `participants`    | `ParticipantSpec[]`                                            | Required, non-empty. A bare `ProviderName`, or `{ provider, model?, maxTokens?, label? }`. |
+| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` \| `"broadcast"` | Optional. Defaults to `"consensus"`.                                                       |
+| `synthesizer`     | `string` (participant id)                                      | _Consensus only._ Who writes the final answer. Defaults to the first participant.          |
+| `attribution`     | `"attributed"` \| `"anonymized"`                               | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias.                      |
+| `minParticipants` | `number`                                                       | _Consensus only._ Minimum drafts required to proceed (default 2).                          |
+| `responseFormat`  | `ResponseFormat`                                               | _Ensemble only (required there)._ The shared JSON Schema every model answers under.        |
 
-The result is a `CombineResult` **discriminated on `strategy`** — narrow on
-`result.strategy` to reach strategy-specific fields. See
+**Two ways to call it.** When you know the strategy at the call site, prefer the
+per-strategy method — `registry.consensus(req)`, `.pipeline(req)`,
+`.ensemble(req)`, `.broadcast(req)` — each takes that strategy's request type and
+returns its **concrete** result (`ConsensusResult`, `PipelineResult`, …), so you
+never narrow a union. `registry.combine(request)` is the dispatcher and is generic over the strategy:
+pass a literal `strategy` and it returns that strategy's concrete result; pass a
+`strategy` only known at runtime and it returns the full `CombineResult` union to
+narrow. The two share one engine and the same validation. See
 [Reading the result](#reading-the-result).
 
 ### Consensus
@@ -234,6 +243,40 @@ Notes:
 - **The merge is shallow** — nested objects/arrays are voted on as whole values.
   Keep schemas to flat fields for the most useful per-field agreement.
 
+### Broadcast
+
+The simplest strategy: send the prompt to every participant **in parallel** and
+get **all** of their answers back, unchanged. There is no critique, synthesis, or
+vote — broadcast deliberately does **not** combine. Use it to compare models side
+by side, or to drive your own selection/UI over the raw outputs.
+
+```ts
+const result = await registry.combine({
+  messages: [{ role: "user", content: "Name a good book on databases." }],
+  participants: ["anthropic", "openai", "google"],
+  strategy: "broadcast",
+});
+
+for (const response of result.responses) {
+  if (response.status === "ok") {
+    console.log(`${response.id}: ${response.result.text}`);
+  } else {
+    console.log(`${response.id} failed: ${response.error.message}`);
+  }
+}
+```
+
+- **No single answer**, so `BroadcastResult` has **no `text`** field — read
+  `result.responses` (one outcome per participant, in participant order).
+- **Each model answers the raw prompt** (no shaped framing) — you get the
+  unmodified per-model reply.
+- **Fails only when every participant fails**; one or more failures are recorded
+  in `responses` and the run still returns the successes. An empty-text answer
+  still counts as a success (broadcast returns what each model gave back).
+- **No structured output:** `responseFormat` is rejected (it's the
+  [ensemble](#ensemble) strategy's job); `synthesizer`, `attribution`, and
+  `minParticipants` are consensus-specific and ignored.
+
 ### Per-participant models
 
 Each participant is identified by an **id** (its label). A bare provider name has
@@ -261,36 +304,58 @@ request-wide values.
 
 ### Reading the result
 
-`combine()` returns a `CombineResult` discriminated on `strategy`. Every outcome
-carries both an `id` (the participant label) and `provider` (the actual provider
-it ran on); `usage` is aggregated across **every** model call the run made (the
-true multi-call cost), keyed by `id`.
+Every outcome carries both an `id` (the participant label) and `provider` (the
+actual provider it ran on); `usage` is aggregated across **every** model call the
+run made (the true multi-call cost), keyed by `id`.
+
+If you call a per-strategy method, the result type is already concrete — no
+narrowing:
 
 ```ts
-const result = await registry.combine({ messages, participants });
+const result = await registry.pipeline({ messages, participants });
+result.finalParticipant; // typed PipelineResult — `stages`, `text`, … all in scope
+```
 
-result.text; // the final answer (all strategies)
+`combine()` with a **literal** `strategy` is just as precise (it's generic over
+the strategy, inferring the result type from `strategy`). You only narrow when the
+strategy is dynamic, in which case `combine()` returns the `CombineResult` union
+discriminated on `strategy`:
+
+```ts
+const strategy = pickStrategyAtRuntime(); // : StrategyName
+const result = await registry.combine({ messages, participants, strategy });
+
 result.usage; // { total, byParticipant } — aggregated token usage, or undefined
 
 if (result.strategy === "consensus") {
+  result.text; // the final synthesized answer
   result.synthesizer; // id of the participant that wrote the final answer
   result.drafts; // each participant's first-pass answer (has .id, .provider)
   result.critiques; // each participant's critique
 } else if (result.strategy === "pipeline") {
+  result.text; // the final, refined answer
   result.finalParticipant; // id of the last stage that produced an answer
   result.stages; // each stage in conveyor order (ok/failed)
 } else if (result.strategy === "ensemble") {
+  result.text; // the merged object serialized as JSON
   result.merged; // the voted object
   result.agreement; // { overall, byField }
   result.responses; // each participant's structured answer (ok/failed)
+} else if (result.strategy === "broadcast") {
+  // No `text` — broadcast returns every raw answer, not one combined answer.
+  result.responses; // each participant's raw answer in order (ok/failed)
 }
 ```
+
+`text` is present on every strategy **except** `broadcast` (which has no single
+answer), so narrow on `result.strategy` before reading it.
 
 **Partial failures are tolerated.** A participant that errors — or succeeds but
 returns empty/invalid output — is recorded in the result and dropped from the
 rest of the round; the run proceeds with the survivors. It throws only when too
 few survive: consensus needs `minParticipants` drafts, pipeline needs at least
-one advancing stage, ensemble needs at least one valid object. `combine()` also
+one advancing stage, ensemble needs at least one valid object, and broadcast needs
+at least one participant to succeed. `combine()` also
 validates the request up front and throws on bad input (no participants,
 duplicate ids, empty `messages`, an out-of-range `minParticipants`, a
 `synthesizer` that isn't a participant id, an unknown `strategy`, or a missing /
@@ -315,7 +380,7 @@ await registry.combine(
         case "draft":
         case "critique": // consensus
         case "stage": // pipeline (has .index)
-        case "response": // ensemble
+        case "response": // ensemble, broadcast
           console.log(`  ${event.provider}: ${event.status}`); // "ok" | "failed"
           break;
       }
@@ -647,7 +712,9 @@ await provider.complete({ messages, signal: AbortSignal.timeout(30_000) });
 
 Exported from the package entry point:
 
-- `ProviderRegistry` — the single entry point (`select()` and `combine()`).
+- `ProviderRegistry` — the single entry point: `select()`, the strategy
+  dispatcher `combine()`, and the per-strategy methods `consensus()`,
+  `pipeline()`, `ensemble()`, `broadcast()`.
 - Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
   `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GoogleProviderOptions`,
@@ -656,10 +723,14 @@ Exported from the package entry point:
   `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,
   `CompletionRequest`, `CompletionResult`, `ResponseFormat`, `ToolDefinition`,
   `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`.
-- Combine types: `CombineRequest`, `ParticipantSpec`, `CombineResult` (=
-  `ConsensusResult` | `PipelineResult` | `EnsembleResult`), `EnsembleAgreement`,
-  `CombineUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
-  `CombineEvent`.
+- Combine request types: `CombineRequest` (the dispatcher's broad type),
+  `CombineRequestBase`, and the per-strategy `ConsensusRequest`,
+  `PipelineRequest`, `EnsembleRequest` (`responseFormat` required),
+  `BroadcastRequest`; plus `ParticipantSpec`.
+- Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
+  `EnsembleResult` | `BroadcastResult`), `EnsembleAgreement`, `CombineUsage`,
+  `ParticipantOutcome`, `StrategyName`, `CombineOptions`, `CombineEvent`, and the
+  strategy-generic utilities `StrategyRequest<S>` / `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
@@ -694,8 +765,8 @@ yarn test:integration consensus.integration  # a combine suite (needs all three 
 ```
 
 The combine suites (`consensus.integration`, `pipeline.integration`,
-`ensemble.integration`) are **triple-gated** on all three keys, since they
-exercise the full multi-model flow. Live tests use cheap models and a small token
+`ensemble.integration`, `broadcast.integration`) are **triple-gated** on all
+three keys, since they exercise the full multi-model flow. Live tests use cheap models and a small token
 cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
 ## Changelog

@@ -80,12 +80,8 @@ describeLive("ProviderRegistry.combine ensemble (live)", () => {
         },
       );
 
-      // `combine()` returns a strategy-discriminated union; narrow to ensemble.
-      if (result.strategy !== "ensemble") {
-        throw new Error(
-          `expected an ensemble result, got "${result.strategy}"`,
-        );
-      }
+      // `combine({ strategy: "ensemble" })` returns a typed `EnsembleResult` (no
+      // union narrowing needed) — `result.merged`/`agreement` are in scope.
 
       // Surface the actual error behind any failed response (e.g. Gemini).
       for (const response of result.responses) {
