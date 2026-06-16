@@ -82,6 +82,28 @@ describe("OpenAIProvider.complete", () => {
     expect(body.stream).toBeUndefined();
   });
 
+  it("merges configured extra headers into the request", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ model: "gpt-4.1", choices: [{ message: {} }] }),
+    }));
+
+    const provider = new OpenAIProvider({
+      apiKey: "sk-test",
+      headers: { "http-referer": "https://example.com", "x-title": "My App" },
+    });
+    await provider.complete({ messages: [{ role: "user", content: "Hi" }] });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.headers).toMatchObject({
+      authorization: "Bearer sk-test",
+      "content-type": "application/json",
+      "http-referer": "https://example.com",
+      "x-title": "My App",
+    });
+  });
+
   it("omits the system message when no system prompt is given", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,

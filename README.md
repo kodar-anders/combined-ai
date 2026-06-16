@@ -21,6 +21,7 @@ today, and is being built toward **combining multiple providers on one prompt**.
 - [Installation](#installation)
 - [Usage](#usage)
   - [Provider configuration](#provider-configuration)
+  - [Custom & gateway providers](#custom--gateway-providers)
   - [Inspecting the registry](#inspecting-the-registry)
   - [Error handling](#error-handling)
   - [Retries](#retries)
@@ -49,6 +50,9 @@ today, and is being built toward **combining multiple providers on one prompt**.
   them, and feed results back through the conversation, all behind one interface.
 - **Anthropic (Claude)**, **OpenAI**, and **Google Gemini** providers, talking
   to their HTTP APIs directly over the global `fetch` — no SDK dependency.
+- Custom & gateway providers — register any OpenAI-compatible endpoint
+  (OpenRouter, Together, Groq, Ollama, …) or bring your own `Provider`, under a
+  name you choose.
 - `ProviderRegistry` — a single point of access: configure your providers, then
   select one by name.
 - Automatic retry with exponential backoff on 429/503/529 (honoring
@@ -139,6 +143,7 @@ new ProviderRegistry({
     apiKey: "sk-...", // required
     model: "gpt-4.1", // optional; this is the default
     baseUrl: "https://api.openai.com", // optional; this is the default
+    headers: { "x-trace": "..." }, // optional; merged into every request
   },
   gemini: {
     apiKey: "...", // required
@@ -147,6 +152,48 @@ new ProviderRegistry({
   },
 });
 ```
+
+### Custom & gateway providers
+
+Beyond the three built-ins you can register extra providers under names you
+choose, via a `custom` map. Two forms:
+
+- **`openai-compatible`** — point the OpenAI provider at any endpoint that speaks
+  the Chat Completions wire format (OpenRouter, Together, Groq, Ollama, a local
+  server, …). `baseUrl` is required and excludes the `/v1/chat/completions` path;
+  `model` is required (there's no sensible default for a third-party endpoint).
+  `headers` (e.g. OpenRouter's `HTTP-Referer`/`X-Title`) and `retry` are optional.
+- **`provider`** — bring your own object implementing the `Provider` interface
+  (`name`/`complete`/`stream`). The escape hatch for an API the library doesn't
+  speak natively, or for wrapping a provider with instrumentation.
+
+```ts
+const registry = new ProviderRegistry({
+  anthropic: { apiKey: "sk-ant-..." },
+  custom: {
+    groq: {
+      kind: "openai-compatible",
+      apiKey: process.env.GROQ_API_KEY!,
+      baseUrl: "https://api.groq.com/openai",
+      model: "llama-3.3-70b-versatile",
+    },
+    ollama: {
+      kind: "openai-compatible",
+      apiKey: "ollama", // ignored by Ollama, but the field is required
+      baseUrl: "http://localhost:11434",
+      model: "llama3",
+    },
+    mine: { kind: "provider", provider: myProviderInstance },
+  },
+});
+
+registry.select("groq"); // a normal Provider
+registry.combine({ participants: ["anthropic", "groq"], messages }); // mix freely
+```
+
+A custom name that collides with a built-in (`anthropic`/`openai`/`gemini`)
+throws at construction. Custom providers work everywhere a built-in does —
+`select()`, `combine()` participants, and the results.
 
 ### Inspecting the registry
 
@@ -159,9 +206,9 @@ registry.select("openai");
 // throws: No provider "openai" configured. Configured: anthropic
 ```
 
-`select()` only accepts a known provider name
-(`"anthropic"` | `"openai"` | `"gemini"`), so typos are caught at compile time;
-selecting a name you didn't configure throws at runtime.
+`select()` accepts the built-in names (`"anthropic"` | `"openai"` | `"gemini"`),
+which autocomplete, plus any custom name you registered. Selecting a name you
+didn't configure throws at runtime.
 
 ### Error handling
 
@@ -699,7 +746,8 @@ Notes:
 Exported from the package entry point:
 
 - `ProviderRegistry` — the single entry point (`select()` and `combine()`).
-- Config types: `ProviderRegistryConfig`, `ProviderName`,
+- Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
+  `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `ContentPart`, `TextPart`,
   `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,

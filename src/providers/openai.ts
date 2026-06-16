@@ -29,6 +29,12 @@ export type OpenAIProviderOptions = {
   model?: string;
   /** Defaults to `https://api.openai.com`. */
   baseUrl?: string;
+  /**
+   * Extra headers merged into (and able to override) every request's headers —
+   * for an OpenAI-compatible gateway's auth/routing (e.g. OpenRouter's
+   * `HTTP-Referer`/`X-Title`) or a proxy. Use lowercase header names.
+   */
+  headers?: Record<string, string>;
   /** Bounded retry/backoff on 429/503/529. Defaults applied when omitted. */
   retry?: RetryOptions;
 };
@@ -42,24 +48,34 @@ const DEFAULT_MAX_TOKENS = 16000;
 const DEFAULT_STREAM_MAX_TOKENS = 64000;
 
 export class OpenAIProvider implements Provider {
-  readonly name = "openai";
+  readonly name: string;
 
   readonly #apiKey: string;
   readonly #model: string;
   readonly #baseUrl: string;
+  readonly #extraHeaders?: Record<string, string>;
   readonly #retry?: RetryOptions;
 
-  constructor(options: OpenAIProviderOptions) {
+  /**
+   * `name` is the provider's identity, used as `this.name` and in error
+   * attribution (`ProviderError.provider`). It defaults to `"openai"`; the
+   * registry passes a custom name for an OpenAI-compatible gateway so its errors
+   * aren't mislabeled `"openai"`. It's a constructor argument rather than a
+   * public option because only the registry sets it — it isn't user config.
+   */
+  constructor(options: OpenAIProviderOptions, name = "openai") {
+    this.name = name;
     this.#apiKey = options.apiKey;
     this.#model = options.model ?? DEFAULT_MODEL;
     this.#baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    this.#extraHeaders = options.headers;
     this.#retry = options.retry;
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
     const response = await requestWithRetry(
-      "openai",
+      this.name,
       `${this.#baseUrl}/v1/chat/completions`,
       {
         method: "POST",
@@ -73,12 +89,12 @@ export class OpenAIProvider implements Provider {
     );
 
     if (!response.ok) {
-      throw await apiError("openai", response);
+      throw await apiError(this.name, response);
     }
 
     const data: unknown = await response.json();
     if (isRecord(data) && isRecord(data.error)) {
-      throw apiErrorFromBody("openai", response.status, data);
+      throw apiErrorFromBody(this.name, response.status, data);
     }
     const rawFinishReason = extractFinishReason(data);
     const refusal = extractRefusal(data);
@@ -105,7 +121,7 @@ export class OpenAIProvider implements Provider {
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
     const response = await requestWithRetry(
-      "openai",
+      this.name,
       `${this.#baseUrl}/v1/chat/completions`,
       {
         method: "POST",
@@ -119,7 +135,7 @@ export class OpenAIProvider implements Provider {
     );
 
     if (!response.ok) {
-      throw await apiError("openai", response);
+      throw await apiError(this.name, response);
     }
     if (!response.body) {
       throw new Error("OpenAI streaming response had no body");
@@ -140,6 +156,7 @@ export class OpenAIProvider implements Provider {
     return {
       authorization: `Bearer ${this.#apiKey}`,
       "content-type": "application/json",
+      ...this.#extraHeaders,
     };
   }
 

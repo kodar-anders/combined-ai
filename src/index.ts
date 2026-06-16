@@ -36,6 +36,10 @@ export { type GeminiProviderOptions } from "./providers/gemini";
 
 export {
   ProviderRegistry,
+  type BuiltInProviderName,
+  type CustomProviderConfig,
+  type CustomProviderInstance,
+  type OpenAICompatibleConfig,
   type ProviderName,
   type ProviderRegistryConfig,
 } from "./registry";

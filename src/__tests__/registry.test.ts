@@ -1,7 +1,8 @@
-import { describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import { type StrategyName } from "../combine";
 import { ProviderRegistry } from "../registry";
+import { type Provider } from "../types";
 
 const PROMPT = {
   messages: [{ role: "user" as const, content: "What is 2 + 2?" }],
@@ -59,6 +60,120 @@ describe("ProviderRegistry", () => {
     expect(() => registry.select("anthropic")).toThrow(
       'No provider "anthropic" configured. Configured: (none)',
     );
+  });
+});
+
+describe("ProviderRegistry custom providers", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    (globalThis as any).fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  function mockFetch(impl: (...args: any[]) => any): jest.Mock {
+    const fn = jest.fn(impl);
+    (globalThis as any).fetch = fn;
+    return fn;
+  }
+
+  it("registers and selects a bring-your-own Provider instance", () => {
+    const custom: Provider = {
+      name: "my-llm",
+      complete: () => Promise.resolve({ text: "hi", model: "m" }),
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      custom: { mine: { kind: "provider", provider: custom } },
+    });
+
+    // The exact instance is handed back, and it lists after the built-ins.
+    expect(registry.select("mine")).toBe(custom);
+    expect(registry.has("mine")).toBe(true);
+    expect(registry.names()).toEqual(["anthropic", "mine"]);
+  });
+
+  it("registers an OpenAI-compatible gateway and threads baseUrl/model/headers through", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "llama-3.3-70b",
+          choices: [{ message: { content: "ok" } }],
+        }),
+    }));
+
+    const registry = new ProviderRegistry({
+      custom: {
+        groq: {
+          kind: "openai-compatible",
+          apiKey: "gk",
+          baseUrl: "https://api.groq.com/openai",
+          model: "llama-3.3-70b",
+          headers: { "x-extra": "1" },
+        },
+      },
+    });
+
+    // The alias name carries onto the provider (not the internal "openai").
+    expect(registry.select("groq").name).toBe("groq");
+
+    const result = await registry
+      .select("groq")
+      .complete({ messages: [{ role: "user", content: "Hi" }] });
+    expect(result.text).toBe("ok");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(init.headers).toMatchObject({
+      authorization: "Bearer gk",
+      "x-extra": "1",
+    });
+    expect(JSON.parse(init.body as string).model).toBe("llama-3.3-70b");
+  });
+
+  it('attributes an OpenAI-compatible gateway\'s errors to its alias name, not "openai"', async () => {
+    mockFetch(() => ({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve("unauthorized"),
+      headers: new Headers(),
+    }));
+
+    const registry = new ProviderRegistry({
+      custom: {
+        groq: {
+          kind: "openai-compatible",
+          apiKey: "bad",
+          baseUrl: "https://api.groq.com/openai",
+          model: "llama-3.3-70b",
+        },
+      },
+    });
+
+    await expect(
+      registry
+        .select("groq")
+        .complete({ messages: [{ role: "user", content: "Hi" }] }),
+    ).rejects.toMatchObject({ provider: "groq" });
+  });
+
+  it("throws when a custom name collides with a built-in", () => {
+    expect(
+      () =>
+        new ProviderRegistry({
+          custom: {
+            openai: {
+              kind: "openai-compatible",
+              apiKey: "k",
+              baseUrl: "https://example.com",
+              model: "m",
+            },
+          },
+        }),
+    ).toThrow(/collides with a built-in/);
   });
 });
 

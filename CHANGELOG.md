@@ -9,6 +9,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- Custom & gateway providers: a `custom` map on `ProviderRegistryConfig`
+  registers extra providers under names you choose. Two forms —
+  `{ kind: "openai-compatible", apiKey, baseUrl, model, headers?, retry? }` points
+  the OpenAI provider at any Chat Completions–compatible endpoint (OpenRouter,
+  Together, Groq, Ollama, a local server, …), and `{ kind: "provider", provider }`
+  brings your own `Provider` implementation. Custom providers work everywhere a
+  built-in does (`select()`, `combine()` participants, results); a name that
+  collides with a built-in throws at construction. An openai-compatible gateway's
+  errors and `provider.name` carry its alias name (not a hardcoded `"openai"`), so
+  `ProviderError.provider` identifies the gateway. `ProviderName` now accepts any
+  custom string while keeping autocomplete for the built-ins. New exported types:
+  `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
+  `BuiltInProviderName`.
+- `headers?` option on `OpenAIProviderOptions` — extra headers merged into (and
+  able to override) every request, for a gateway's auth/routing headers or a proxy.
 - Core, provider-agnostic contract in `src/types.ts`: `Provider`, `Message`,
   `Role`, `CompletionRequest`, `CompletionResult`.
 - Tool / function calling (single-provider, `complete()`). Pass `tools` (a
