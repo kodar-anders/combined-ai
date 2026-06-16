@@ -308,6 +308,15 @@ describe("ProviderRegistry.combine", () => {
         responseFormat,
       }),
     ).rejects.toThrow(/only supported by the "ensemble" strategy/);
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        strategy: "broadcast",
+        responseFormat,
+      }),
+    ).rejects.toThrow(/only supported by the "ensemble" strategy/);
   });
 
   it("rejects a non-object-root schema for the ensemble strategy", async () => {
@@ -426,5 +435,39 @@ describe("ProviderRegistry.combine", () => {
       throw new Error(`expected a pipeline result, got "${result.strategy}"`);
     }
     expect(result.finalParticipant).toBe("mine-smart");
+  });
+
+  it("dispatches the broadcast strategy and returns every raw response", async () => {
+    const echo: Provider = {
+      name: "mine",
+      complete: (req: CompletionRequest): Promise<CompletionResult> =>
+        Promise.resolve({ text: `${req.model ?? "?"} says hi`, model: "m" }),
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    const result = await registry.combine({
+      ...PROMPT,
+      strategy: "broadcast",
+      participants: [
+        { provider: "mine", model: "fast" },
+        { provider: "mine", model: "smart" },
+      ],
+    });
+
+    if (result.strategy !== "broadcast") {
+      throw new Error(`expected a broadcast result, got "${result.strategy}"`);
+    }
+    expect(result.responses.map((o) => o.id)).toEqual([
+      "mine-fast",
+      "mine-smart",
+    ]);
+    expect(
+      result.responses.map((o) => (o.status === "ok" ? o.result.text : null)),
+    ).toEqual(["fast says hi", "smart says hi"]);
   });
 });
