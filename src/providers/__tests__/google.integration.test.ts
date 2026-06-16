@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "@jest/globals";
 
-import { GeminiProvider } from "../gemini";
+import { GoogleProvider } from "../google";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const live = process.env.RUN_LIVE_TESTS === "1" && apiKey !== undefined;
@@ -17,8 +17,8 @@ const describeLive = live ? describe : describe.skip;
 
 const TIMEOUT_MS = 30_000;
 
-describeLive("GeminiProvider (live)", () => {
-  const provider = new GeminiProvider({
+describeLive("GoogleProvider (live)", () => {
+  const provider = new GoogleProvider({
     apiKey: apiKey ?? "",
     model: "gemini-2.5-flash",
   });

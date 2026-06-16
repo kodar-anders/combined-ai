@@ -37,7 +37,7 @@ describeLive("ProviderRegistry.combine ensemble (live)", () => {
   const registry = new ProviderRegistry({
     anthropic: { apiKey: anthropicKey ?? "", model: "claude-haiku-4-5" },
     openai: { apiKey: openaiKey ?? "", model: "gpt-4.1-mini" },
-    gemini: { apiKey: geminiKey ?? "", model: "gemini-2.5-flash" },
+    google: { apiKey: geminiKey ?? "", model: "gemini-2.5-flash" },
   });
 
   it(
@@ -53,7 +53,7 @@ describeLive("ProviderRegistry.combine ensemble (live)", () => {
                 "Extract the city and country where the Eiffel Tower is.",
             },
           ],
-          participants: ["anthropic", "openai", "gemini"],
+          participants: ["anthropic", "openai", "google"],
           strategy: "ensemble",
           responseFormat: {
             type: "json_schema",
@@ -100,7 +100,7 @@ describeLive("ProviderRegistry.combine ensemble (live)", () => {
       expect(result.responses.map((r) => r.provider)).toEqual([
         "anthropic",
         "openai",
-        "gemini",
+        "google",
       ]);
       // The models should agree on this unambiguous fact.
       expect(result.merged).toMatchObject({ city: "Paris", country: "France" });

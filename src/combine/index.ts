@@ -17,15 +17,45 @@ export const STRATEGY_NAMES = ["consensus", "pipeline", "ensemble"] as const;
 
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
 
+/**
+ * One participant in a combine. A bare provider name uses that provider's
+ * configured default model; the object form overrides the model and/or maxTokens
+ * for this participant only — letting one combine mix cheap drafters with a strong
+ * synthesizer, or run the same provider twice with different models.
+ */
+export type ParticipantSpec =
+  | ProviderName
+  | {
+      /** Which configured provider to run this participant on (validated by the registry). */
+      provider: ProviderName;
+      /** Model for this participant. Falls back to `request.model`, then the provider default. */
+      model?: string;
+      /** maxTokens for this participant. Falls back to `request.maxTokens`. */
+      maxTokens?: number;
+      /**
+       * Unique id for this participant in results/events/usage and for `synthesizer`.
+       * Defaults to the provider name, or `<provider>-<model>` when `model` is set.
+       * Required (must be set explicitly) only to disambiguate two participants that
+       * would otherwise resolve to the same id (e.g. the same provider+model twice).
+       */
+      label?: string;
+    };
+
 export type CombineRequest = CompletionRequest & {
-  /** Which configured providers participate. Picked by name, validated by the registry. */
-  participants: ProviderName[];
   /**
-   * **Consensus only.** Which participant writes the final synthesized answer.
-   * Must be one of `participants`. Defaults to the first participant. Ignored by
-   * the `pipeline` strategy, where the last successful stage produces the answer.
+   * Who participates. A bare provider name uses its configured default model; the
+   * object form ({@link ParticipantSpec}) overrides model/maxTokens per participant.
+   * Resolved to a unique id each (see {@link ParticipantSpec.label}); validated by
+   * the registry.
    */
-  synthesizer?: ProviderName;
+  participants: ParticipantSpec[];
+  /**
+   * **Consensus only.** Which participant writes the final synthesized answer,
+   * referenced by its **id** (see {@link ParticipantSpec.label}). Defaults to the
+   * first participant. Ignored by the `pipeline` strategy, where the last
+   * successful stage produces the answer.
+   */
+  synthesizer?: string;
   /** Cooperation strategy. Defaults to `"consensus"`. */
   strategy?: StrategyName;
   /**
@@ -49,12 +79,20 @@ export type CombineRequest = CompletionRequest & {
 
 /**
  * The outcome of one participant in one phase — either its result or its failure.
+ * `id` is the participant's unique id (see {@link ParticipantSpec.label}); `provider`
+ * is the actual provider it ran on (these differ when a model override gives the
+ * participant a `<provider>-<model>` id, or two participants share one provider).
  * A failure's `error` is typically a `ProviderError` (carrying `status`/`kind`/
  * `code`); narrow with `instanceof ProviderError` to read those fields.
  */
 export type ParticipantOutcome =
-  | { provider: ProviderName; status: "ok"; result: CompletionResult }
-  | { provider: ProviderName; status: "failed"; error: Error };
+  | {
+      id: string;
+      provider: ProviderName;
+      status: "ok";
+      result: CompletionResult;
+    }
+  | { id: string; provider: ProviderName; status: "failed"; error: Error };
 
 /**
  * Aggregated token usage across all the model calls a combine made — the true
@@ -65,8 +103,8 @@ export type ParticipantOutcome =
 export type CombineUsage = {
   /** Total usage summed across every call the combine made. */
   total: Usage;
-  /** Usage per participant, summed across all of that participant's calls. */
-  byParticipant: Partial<Record<ProviderName, Usage>>;
+  /** Usage per participant id, summed across all of that participant's calls. */
+  byParticipant: Partial<Record<string, Usage>>;
 };
 
 /** The result of the `consensus` strategy (draft → critique → synthesize). */
@@ -74,8 +112,8 @@ export type ConsensusResult = {
   /** The final synthesized answer. */
   text: string;
   strategy: "consensus";
-  /** The participant that wrote the final answer (may be a fallback if the chosen one failed). */
-  synthesizer: ProviderName;
+  /** The id of the participant that wrote the final answer (may be a fallback if the chosen one failed). */
+  synthesizer: string;
   /** The model the synthesizer actually used. */
   model: string;
   /** Phase 1 drafts, in participant order (includes any failures). */
@@ -91,8 +129,8 @@ export type PipelineResult = {
   /** The final answer — the output of the last stage that produced one. */
   text: string;
   strategy: "pipeline";
-  /** The participant that produced the final answer (the last advancing stage). */
-  finalProvider: ProviderName;
+  /** The id of the participant that produced the final answer (the last advancing stage). */
+  finalParticipant: string;
   /** The model that produced the final answer. */
   model: string;
   /** Every stage in pipeline (participant) order, including any failures. */
@@ -153,16 +191,32 @@ export type CombineResult = ConsensusResult | PipelineResult | EnsembleResult;
  */
 export type CombineEvent =
   | { type: "phase"; phase: "drafting" | "critiquing" | "synthesizing" }
-  | { type: "draft"; provider: ProviderName; status: "ok" | "failed" }
-  | { type: "critique"; provider: ProviderName; status: "ok" | "failed" }
+  | {
+      type: "draft";
+      id: string;
+      provider: ProviderName;
+      status: "ok" | "failed";
+    }
+  | {
+      type: "critique";
+      id: string;
+      provider: ProviderName;
+      status: "ok" | "failed";
+    }
   | {
       /** A `pipeline` stage settled. `index` is its 0-based position in the conveyor. */
       type: "stage";
+      id: string;
       provider: ProviderName;
       status: "ok" | "failed";
       index: number;
     }
-  | { type: "response"; provider: ProviderName; status: "ok" | "failed" };
+  | {
+      type: "response";
+      id: string;
+      provider: ProviderName;
+      status: "ok" | "failed";
+    };
 
 export type CombineOptions = {
   /**

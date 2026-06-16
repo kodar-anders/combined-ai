@@ -21,7 +21,7 @@ import {
   type Usage,
 } from "../types";
 
-export type GeminiProviderOptions = {
+export type GoogleProviderOptions = {
   apiKey: string;
   /** Defaults to {@link DEFAULT_MODEL}. */
   model?: string;
@@ -39,15 +39,15 @@ const DEFAULT_MAX_TOKENS = 16000;
 /** Streaming has no timeout concern, so give the model more room. */
 const DEFAULT_STREAM_MAX_TOKENS = 64000;
 
-export class GeminiProvider implements Provider {
-  readonly name = "gemini";
+export class GoogleProvider implements Provider {
+  readonly name = "google";
 
   readonly #apiKey: string;
   readonly #model: string;
   readonly #baseUrl: string;
   readonly #retry?: RetryOptions;
 
-  constructor(options: GeminiProviderOptions) {
+  constructor(options: GoogleProviderOptions) {
     this.#apiKey = options.apiKey;
     this.#model = options.model ?? DEFAULT_MODEL;
     this.#baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
@@ -57,7 +57,7 @@ export class GeminiProvider implements Provider {
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
     const response = await requestWithRetry(
-      "gemini",
+      "google",
       this.#url(model, false),
       {
         method: "POST",
@@ -69,12 +69,12 @@ export class GeminiProvider implements Provider {
     );
 
     if (!response.ok) {
-      throw await apiError("gemini", response);
+      throw await apiError("google", response);
     }
 
     const data: unknown = await response.json();
     if (isRecord(data) && isRecord(data.error)) {
-      throw apiErrorFromBody("gemini", response.status, data);
+      throw apiErrorFromBody("google", response.status, data);
     }
     const rawFinishReason = extractFinishReason(data);
     const text = extractText(data);
@@ -103,7 +103,7 @@ export class GeminiProvider implements Provider {
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
     const response = await requestWithRetry(
-      "gemini",
+      "google",
       this.#url(model, true),
       {
         method: "POST",
@@ -117,15 +117,15 @@ export class GeminiProvider implements Provider {
     );
 
     if (!response.ok) {
-      throw await apiError("gemini", response);
+      throw await apiError("google", response);
     }
     if (!response.body) {
-      throw new Error("Gemini streaming response had no body");
+      throw new Error("Google streaming response had no body");
     }
 
     for await (const event of sseJson(response.body)) {
       if (isRecord(event.error)) {
-        throw new Error(`Gemini stream error: ${JSON.stringify(event)}`);
+        throw new Error(`Google stream error: ${JSON.stringify(event)}`);
       }
       const text = extractText(event);
       if (text.length > 0) {

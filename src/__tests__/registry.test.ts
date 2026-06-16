@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import { type StrategyName } from "../combine";
 import { ProviderRegistry } from "../registry";
-import { type Provider } from "../types";
+import {
+  type CompletionRequest,
+  type CompletionResult,
+  type Provider,
+} from "../types";
 
 const PROMPT = {
   messages: [{ role: "user" as const, content: "What is 2 + 2?" }],
@@ -19,13 +23,13 @@ describe("ProviderRegistry", () => {
     const registry = new ProviderRegistry({
       anthropic: { apiKey: "a" },
       openai: { apiKey: "o" },
-      gemini: { apiKey: "g" },
+      google: { apiKey: "g" },
     });
 
     expect(registry.select("anthropic").name).toBe("anthropic");
     expect(registry.select("openai").name).toBe("openai");
-    expect(registry.select("gemini").name).toBe("gemini");
-    expect(registry.names()).toEqual(["anthropic", "openai", "gemini"]);
+    expect(registry.select("google").name).toBe("google");
+    expect(registry.names()).toEqual(["anthropic", "openai", "google"]);
   });
 
   it("only registers providers present in the config", () => {
@@ -38,12 +42,12 @@ describe("ProviderRegistry", () => {
 
   it("returns names in a fixed order regardless of config key order", () => {
     const registry = new ProviderRegistry({
-      gemini: { apiKey: "g" },
+      google: { apiKey: "g" },
       openai: { apiKey: "o" },
       anthropic: { apiKey: "a" },
     });
 
-    expect(registry.names()).toEqual(["anthropic", "openai", "gemini"]);
+    expect(registry.names()).toEqual(["anthropic", "openai", "google"]);
   });
 
   it("throws when selecting a provider that wasn't configured, listing the configured ones", () => {
@@ -350,5 +354,77 @@ describe("ProviderRegistry.combine", () => {
         toolChoice: "auto",
       }),
     ).rejects.toThrow(/does not support tool calling/);
+  });
+
+  it("throws when two participants resolve to the same label", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: [
+          { provider: "anthropic", model: "m" },
+          { provider: "anthropic", model: "m" },
+        ],
+      }),
+    ).rejects.toThrow(/labels must be unique/);
+  });
+
+  it("throws on an empty per-participant model", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: [{ provider: "anthropic", model: "" }],
+      }),
+    ).rejects.toThrow(/empty model/);
+  });
+
+  it("throws on a non-positive per-participant maxTokens", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: [{ provider: "anthropic", maxTokens: 0 }],
+      }),
+    ).rejects.toThrow(/maxTokens/);
+  });
+
+  it("runs the same provider twice with different per-participant models", async () => {
+    // A bring-your-own provider that echoes the per-call model lets us assert each
+    // participant's model override threads through to its completion.
+    const calls: CompletionRequest[] = [];
+    const echoModel: Provider = {
+      name: "mine",
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        return Promise.resolve({ text: "answer", model: request.model ?? "?" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echoModel } },
+    });
+
+    const result = await registry.combine({
+      ...PROMPT,
+      strategy: "pipeline",
+      participants: [
+        { provider: "mine", model: "fast" },
+        { provider: "mine", model: "smart" },
+      ],
+    });
+
+    // Two stages on the one provider, each with its own model override; labels are
+    // auto-derived as `<provider>-<model>`, so they don't collide.
+    expect(calls.map((c) => c.model)).toEqual(["fast", "smart"]);
+    if (result.strategy !== "pipeline") {
+      throw new Error(`expected a pipeline result, got "${result.strategy}"`);
+    }
+    expect(result.finalParticipant).toBe("mine-smart");
   });
 });

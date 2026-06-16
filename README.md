@@ -103,7 +103,7 @@ import { ProviderRegistry } from "combined-ai";
 const registry = new ProviderRegistry({
   anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! },
   openai: { apiKey: process.env.OPENAI_API_KEY! },
-  gemini: { apiKey: process.env.GEMINI_API_KEY! },
+  google: { apiKey: process.env.GEMINI_API_KEY! },
 });
 
 const provider = registry.select("anthropic"); // throws if not configured
@@ -145,7 +145,7 @@ new ProviderRegistry({
     baseUrl: "https://api.openai.com", // optional; this is the default
     headers: { "x-trace": "..." }, // optional; merged into every request
   },
-  gemini: {
+  google: {
     apiKey: "...", // required
     model: "gemini-2.5-pro", // optional; this is the default
     baseUrl: "https://generativelanguage.googleapis.com", // optional; this is the default
@@ -191,7 +191,7 @@ registry.select("groq"); // a normal Provider
 registry.combine({ participants: ["anthropic", "groq"], messages }); // mix freely
 ```
 
-A custom name that collides with a built-in (`anthropic`/`openai`/`gemini`)
+A custom name that collides with a built-in (`anthropic`/`openai`/`google`)
 throws at construction. Custom providers work everywhere a built-in does —
 `select()`, `combine()` participants, and the results.
 
@@ -206,7 +206,7 @@ registry.select("openai");
 // throws: No provider "openai" configured. Configured: anthropic
 ```
 
-`select()` accepts the built-in names (`"anthropic"` | `"openai"` | `"gemini"`),
+`select()` accepts the built-in names (`"anthropic"` | `"openai"` | `"google"`),
 which autocomplete, plus any custom name you registered. Selecting a name you
 didn't configure throws at runtime.
 
@@ -286,28 +286,54 @@ prompt with `registry.combine()`. Pick a strategy with `strategy` (defaults to
 | `"pipeline"`  | sequential refinement (a belt) | the last stage to produce an answer |
 
 `combine()` accepts the same `CompletionRequest` fields as `complete()`
-(`messages`, `system`, `model`, `maxTokens`) — they apply to every participant —
-plus:
+(`messages`, `system`, `model`, `maxTokens`) — they apply to every participant
+unless a participant overrides them (see `participants` below) — plus:
 
-| Field             | Type                             | Notes                                                                                                                                |
-| ----------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `participants`    | `ProviderName[]`                 | Required. Must be configured, non-empty, and unique; validated like `select()`. For `pipeline`, the order is the conveyor order.     |
-| `strategy`        | `"consensus"` \| `"pipeline"`    | Optional. Defaults to `"consensus"`.                                                                                                 |
-| `synthesizer`     | `ProviderName`                   | _Consensus only._ Must be a participant. Defaults to the first. Ignored by `pipeline`.                                               |
-| `attribution`     | `"attributed"` \| `"anonymized"` | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias; `"attributed"` shows provider names. Ignored by `pipeline`.    |
-| `minParticipants` | `number`                         | _Consensus only._ Minimum drafts required to proceed (default 2). A positive integer ≤ the participant count. Ignored by `pipeline`. |
+| Field             | Type                                          | Notes                                                                                                                                                                                               |
+| ----------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `participants`    | `ParticipantSpec[]`                           | Required, non-empty. A bare `ProviderName` uses that provider's default model; the object form overrides `model`/`maxTokens` for that participant. For `pipeline`, the order is the conveyor order. |
+| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` | Optional. Defaults to `"consensus"`.                                                                                                                                                                |
+| `synthesizer`     | `string` (participant id)                     | _Consensus only._ Must be a participant id. Defaults to the first. Ignored by `pipeline`.                                                                                                           |
+| `attribution`     | `"attributed"` \| `"anonymized"`              | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias; `"attributed"` shows participant ids. Ignored by `pipeline`.                                                                  |
+| `minParticipants` | `number`                                      | _Consensus only._ Minimum drafts required to proceed (default 2). A positive integer ≤ the participant count. Ignored by `pipeline`.                                                                |
+
+##### Per-participant models
+
+Each participant is identified by an **id** (its label). A bare provider name has
+an id equal to the provider name; the object form derives `<provider>-<model>`
+when you set a model (or set `label` yourself). This lets one combine mix cheap
+drafters with a strong synthesizer — and even run the **same provider twice** with
+different models:
+
+```ts
+await registry.combine({
+  messages,
+  participants: [
+    { provider: "google", model: "gemini-2.5-flash" }, // id "google-gemini-2.5-flash"
+    { provider: "openai", model: "gpt-4.1-mini" }, //     id "openai-gpt-4.1-mini"
+    { provider: "anthropic" }, //                         id "anthropic" (default model)
+  ],
+  synthesizer: "anthropic", // a strong model adjudicates the cheap drafts
+});
+```
+
+Two participants that resolve to the **same** id (e.g. the same provider+model
+twice) are rejected unless you give one an explicit `label`. A participant's
+`model`/`maxTokens` take precedence over the request-wide `model`/`maxTokens`.
 
 `combine()` returns a `CombineResult` **discriminated on `strategy`** — narrow on
-`result.strategy` to reach the strategy-specific fields:
+`result.strategy` to reach the strategy-specific fields. Every outcome carries
+both an `id` (the participant label) and `provider` (the actual provider it ran
+on); usage is keyed by `id`:
 
 ```ts
 const result = await registry.combine({ messages, participants });
 if (result.strategy === "consensus") {
-  result.synthesizer; // who wrote the final answer
-  result.drafts; // each participant's first-pass answer (or failure)
+  result.synthesizer; // id of the participant that wrote the final answer
+  result.drafts; // each participant's first-pass answer (or failure); has .id and .provider
   result.critiques; // each participant's critique (or failure)
-} else {
-  result.finalProvider; // the last stage that produced an answer
+} else if (result.strategy === "pipeline") {
+  result.finalParticipant; // id of the last stage that produced an answer
   result.stages; // each stage in conveyor order (or failure)
 }
 ```
@@ -326,7 +352,7 @@ The default strategy:
 ```ts
 const result = await registry.combine({
   messages: [{ role: "user", content: "Design a rate limiter." }],
-  participants: ["anthropic", "openai", "gemini"], // who takes part
+  participants: ["anthropic", "openai", "google"], // who takes part
   synthesizer: "anthropic", // optional; defaults to the first participant
   // strategy: "consensus",                          // optional; the default
   // attribution: "attributed",                     // optional; default "anonymized"
@@ -347,9 +373,9 @@ Behavior notes:
   assumptions, and caveats, so critics can check the _why_, not just the
   conclusion. The user-facing synthesis is not constrained.
 - **Drafts are anonymized to the other providers by default.** Critics and the
-  synthesizer see `Answer A`/`B`/`C` rather than provider names, to neutralize
+  synthesizer see `Answer A`/`B`/`C` rather than participant ids, to neutralize
   brand and self-preference bias (pass `attribution: "attributed"` to opt out).
-  `result.drafts` / `result.critiques` always keep provider names.
+  `result.drafts` / `result.critiques` always keep each outcome's `id` and `provider`.
 - **Critics vote; the synthesizer adjudicates on correctness.** Each critique
   ends with a structured pick (best answer, key fix, confidence). The synthesizer
   is told to judge on correctness over popularity — adopting a lone correct
@@ -362,10 +388,10 @@ Behavior notes:
   final **sanitizing pass** rewrites the answer to strip any leftover meta-commentary
   (one extra model call per combine; on failure it returns the un-sanitized answer).
 - **Bad requests throw early.** `combine()` validates before doing any work and
-  throws on: no participants, duplicate participant names, an empty `messages`
-  array, a `minParticipants` that isn't a positive integer or exceeds the
-  participant count, a `synthesizer` that isn't a participant, or an unknown
-  `strategy`.
+  throws on: no participants, duplicate participant ids (two participants resolving
+  to the same label), an empty `messages` array, a `minParticipants` that isn't a
+  positive integer or exceeds the participant count, a `synthesizer` that isn't a
+  participant id, or an unknown `strategy`.
 - **Partial failures are tolerated.** A provider that fails to draft — or
   succeeds but returns empty text — is recorded in `result.drafts` and dropped
   from the rest of the round; the round proceeds with the survivors as long as
@@ -389,12 +415,12 @@ produce an answer is the final answer**.
 ```ts
 const result = await registry.combine({
   messages: [{ role: "user", content: "Design a rate limiter." }],
-  participants: ["anthropic", "openai", "gemini"], // the conveyor order
+  participants: ["anthropic", "openai", "google"], // the conveyor order
   strategy: "pipeline",
 });
 
 console.log(result.text); // the final, refined answer
-console.log(result.finalProvider); // the last stage that produced an answer
+console.log(result.finalParticipant); // id of the last stage that produced an answer
 console.log(result.stages); // every stage in order (each "ok" or "failed")
 ```
 
@@ -435,7 +461,7 @@ and classification with built-in confidence.
 ```ts
 const result = await registry.combine({
   messages: [{ role: "user", content: "Extract the city and country: ..." }],
-  participants: ["anthropic", "openai", "gemini"],
+  participants: ["anthropic", "openai", "google"],
   strategy: "ensemble",
   responseFormat: {
     type: "json_schema",
@@ -748,7 +774,7 @@ Exported from the package entry point:
 - `ProviderRegistry` — the single entry point (`select()` and `combine()`).
 - Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
   `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
-  `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GeminiProviderOptions`.
+  `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GoogleProviderOptions`.
 - Contract types: `Provider`, `Message`, `Role`, `ContentPart`, `TextPart`,
   `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,
   `CompletionRequest`, `CompletionResult`, `ResponseFormat`, `ToolDefinition`,
@@ -756,12 +782,13 @@ Exported from the package entry point:
 - `ProviderError` (a value — usable with `instanceof`) and its `ProviderErrorKind`
   type — see [Error handling](#error-handling).
 - `RetryOptions` — the per-provider `retry` config shape; see [Retries](#retries).
-- Combine types: `CombineRequest`, `CombineResult` (= `ConsensusResult` |
-  `PipelineResult` | `EnsembleResult`), `EnsembleAgreement`, `CombineUsage`,
-  `ParticipantOutcome`, `StrategyName`, `CombineOptions`, `CombineEvent`.
+- Combine types: `CombineRequest`, `ParticipantSpec`, `CombineResult` (=
+  `ConsensusResult` | `PipelineResult` | `EnsembleResult`), `EnsembleAgreement`,
+  `CombineUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
+  `CombineEvent`.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
-`GeminiProvider`) are **not** exported — they are constructed internally by the
+`GoogleProvider`) are **not** exported — they are constructed internally by the
 registry.
 
 ## Development
@@ -797,7 +824,7 @@ default, which is all integration tests):
 ```bash
 yarn test:integration openai.integration      # OpenAI only
 yarn test:integration anthropic.integration    # Anthropic only
-yarn test:integration gemini.integration       # Gemini only
+yarn test:integration google.integration       # Gemini only
 yarn test:integration consensus.integration    # consensus combine (all three)
 yarn test:integration pipeline.integration      # pipeline combine (all three)
 ```

@@ -36,7 +36,7 @@ describeLive("ProviderRegistry.combine consensus (live)", () => {
   const registry = new ProviderRegistry({
     anthropic: { apiKey: anthropicKey ?? "", model: "claude-haiku-4-5" },
     openai: { apiKey: openaiKey ?? "", model: "gpt-4.1-mini" },
-    gemini: { apiKey: geminiKey ?? "", model: "gemini-2.5-flash" },
+    google: { apiKey: geminiKey ?? "", model: "gemini-2.5-flash" },
   });
 
   it(
@@ -51,7 +51,7 @@ describeLive("ProviderRegistry.combine consensus (live)", () => {
               content: "In one sentence, what makes a good API?",
             },
           ],
-          participants: ["anthropic", "openai", "gemini"],
+          participants: ["anthropic", "openai", "google"],
           // Generous: critiques now carry reasoning + a verdict, and Gemini 2.5
           // spends thinking tokens against this cap (see the README note).
           maxTokens: 2048,
@@ -89,7 +89,7 @@ describeLive("ProviderRegistry.combine consensus (live)", () => {
       expect(result.strategy).toBe("consensus");
       expect(result.text.length).toBeGreaterThan(0);
       // Default synthesizer is the first participant (unless it failed).
-      expect(["anthropic", "openai", "gemini"]).toContain(result.synthesizer);
+      expect(["anthropic", "openai", "google"]).toContain(result.synthesizer);
       // Every participant drafted and critiqued.
       expect(result.drafts.length).toBeGreaterThanOrEqual(2);
       expect(result.critiques.length).toBeGreaterThanOrEqual(2);

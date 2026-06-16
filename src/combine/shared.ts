@@ -21,8 +21,26 @@ import {
   type Usage,
 } from "../types";
 
-/** A participant, kept with its resolved provider for the orchestration phases. */
-export type RosterEntry = { name: ProviderName; provider: Provider };
+/**
+ * A participant, kept with its resolved provider for the orchestration phases.
+ * `id` is its unique label (surfaced in results/events); `providerName` is the
+ * actual provider it runs on; `model`/`maxTokens` are its optional per-participant
+ * overrides (applied by {@link completionFor}, falling back to the request's).
+ */
+export type RosterEntry = {
+  id: string;
+  providerName: ProviderName;
+  provider: Provider;
+  model?: string;
+  maxTokens?: number;
+};
+
+/**
+ * The per-participant request overrides {@link completionFor} applies on top of
+ * the request-wide values. A {@link RosterEntry} (or `Survivor`/`Running.entry`)
+ * is structurally a valid value, so callers pass the entry directly.
+ */
+export type ParticipantOverrides = Pick<RosterEntry, "model" | "maxTokens">;
 
 /**
  * Wrap an optional progress callback into an `emit` that swallows handler errors
@@ -57,21 +75,28 @@ const SANITIZE_FRAMING =
   "substance, wording, and length as much as possible; change only what is " +
   "needed. Output only the rewritten answer, with no preamble.";
 
-/** Build a per-phase completion request, carrying over the caller's model/maxTokens/signal. */
+/**
+ * Build a per-phase completion request, carrying over the caller's
+ * model/maxTokens/signal. A participant's per-participant `overrides` take
+ * precedence over the request-wide `model`/`maxTokens` (which act as the fallback).
+ */
 export function completionFor(
   request: CombineRequest,
   system: string | undefined,
   messages: Message[],
+  overrides?: ParticipantOverrides,
 ): CompletionRequest {
   const completion: CompletionRequest = { messages };
   if (system !== undefined) {
     completion.system = system;
   }
-  if (request.model !== undefined) {
-    completion.model = request.model;
+  const model = overrides?.model ?? request.model;
+  if (model !== undefined) {
+    completion.model = model;
   }
-  if (request.maxTokens !== undefined) {
-    completion.maxTokens = request.maxTokens;
+  const maxTokens = overrides?.maxTokens ?? request.maxTokens;
+  if (maxTokens !== undefined) {
+    completion.maxTokens = maxTokens;
   }
   // Carry the abort signal into every phase so one signal cancels the whole
   // combine (aborting all in-flight provider calls at once).
@@ -97,13 +122,15 @@ export function composeSystem(
 
 /** Run one participant's completion, capturing success or failure as an outcome. */
 export async function runOutcome(
+  id: string,
   provider: ProviderName,
   run: () => Promise<CompletionResult>,
 ): Promise<ParticipantOutcome> {
   try {
-    return { provider, status: "ok", result: await run() };
+    return { id, provider, status: "ok", result: await run() };
   } catch (error) {
     return {
+      id,
       provider,
       status: "failed",
       error: error instanceof Error ? error : new Error(String(error)),
@@ -120,12 +147,16 @@ export async function sanitizeAnswer(
   provider: Provider,
   request: CombineRequest,
   answer: string,
+  overrides?: ParticipantOverrides,
 ): Promise<{ text: string; usage?: Usage }> {
   try {
     const result = await provider.complete(
-      completionFor(request, composeSystem(request.system, SANITIZE_FRAMING), [
-        { role: "user", content: answer },
-      ]),
+      completionFor(
+        request,
+        composeSystem(request.system, SANITIZE_FRAMING),
+        [{ role: "user", content: answer }],
+        overrides,
+      ),
     );
     // The call was billed whether or not we keep its output, so report its usage.
     return {
@@ -137,13 +168,13 @@ export async function sanitizeAnswer(
   }
 }
 
-/** A single model call's token usage, attributed to the participant that made it. */
-export type UsageEntry = { provider: ProviderName; usage?: Usage };
+/** A single model call's token usage, attributed (by id) to the participant that made it. */
+export type UsageEntry = { id: string; usage?: Usage };
 
 /** Map per-participant outcomes to usage entries (a failed outcome has no usage). */
 export function outcomeUsage(outcomes: ParticipantOutcome[]): UsageEntry[] {
   return outcomes.map((o) => ({
-    provider: o.provider,
+    id: o.id,
     usage: o.status === "ok" ? o.result.usage : undefined,
   }));
 }
@@ -156,17 +187,17 @@ export function outcomeUsage(outcomes: ParticipantOutcome[]): UsageEntry[] {
 export function aggregateUsage(
   entries: UsageEntry[],
 ): CombineUsage | undefined {
-  const byParticipant: Partial<Record<ProviderName, Usage>> = {};
+  const byParticipant: Partial<Record<string, Usage>> = {};
   const total: Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  for (const { provider, usage } of entries) {
+  for (const { id, usage } of entries) {
     if (usage === undefined) {
       continue;
     }
     total.inputTokens += usage.inputTokens;
     total.outputTokens += usage.outputTokens;
     total.totalTokens += usage.totalTokens;
-    const acc = byParticipant[provider];
-    byParticipant[provider] = {
+    const acc = byParticipant[id];
+    byParticipant[id] = {
       inputTokens: (acc?.inputTokens ?? 0) + usage.inputTokens,
       outputTokens: (acc?.outputTokens ?? 0) + usage.outputTokens,
       totalTokens: (acc?.totalTokens ?? 0) + usage.totalTokens,

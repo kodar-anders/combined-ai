@@ -63,10 +63,11 @@ function entry(
   name: ProviderName,
   provider: Provider,
 ): {
-  name: ProviderName;
+  id: string;
+  providerName: ProviderName;
   provider: Provider;
 } {
-  return { name, provider };
+  return { id: name, providerName: name, provider };
 }
 
 describe("ensemble", () => {
@@ -229,13 +230,44 @@ describe("ensemble", () => {
 
     expect(events).toContainEqual({
       type: "response",
+      id: "anthropic",
       provider: "anthropic",
       status: "ok",
     });
     expect(events).toContainEqual({
       type: "response",
+      id: "openai",
       provider: "openai",
       status: "failed",
     });
+  });
+
+  it("applies each participant's model override to its call", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls, {
+          parsed: { city: "Paris" },
+        }),
+        model: "claude-x",
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls, { parsed: { city: "Paris" } }),
+        model: "gpt-x",
+      },
+    ];
+
+    await ensemble(roster, request({ participants: ["anthropic", "openai"] }));
+
+    expect(calls.find((c) => c.provider === "anthropic")?.request.model).toBe(
+      "claude-x",
+    );
+    expect(calls.find((c) => c.provider === "openai")?.request.model).toBe(
+      "gpt-x",
+    );
   });
 });
