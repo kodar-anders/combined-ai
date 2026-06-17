@@ -7,6 +7,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+
+- Google (Gemini) provider: drop `additionalProperties` from `responseSchema`
+  and tool `parameters`. The Gemini API now rejects the keyword with a 400
+  instead of ignoring it, which broke structured output / ensemble combine.
+
 ### Security
 
 - Pin transitive dev dependencies via `resolutions` to clear advisories (build/test

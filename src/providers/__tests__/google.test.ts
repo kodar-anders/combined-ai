@@ -246,7 +246,6 @@ describe("GoogleProvider.complete", () => {
       type: "OBJECT",
       properties: { city: { type: "STRING" } },
       required: ["city"],
-      additionalProperties: false,
     });
   });
 
@@ -276,7 +275,6 @@ describe("GoogleProvider.complete", () => {
               type: "OBJECT",
               properties: { city: { type: "STRING" } },
               required: ["city"],
-              additionalProperties: false,
             },
           },
         ],

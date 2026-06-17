@@ -213,8 +213,9 @@ function toGeminiFunctionCallingConfig(
  * Convert a JSON Schema to Gemini's OpenAPI-3 subset. The load-bearing
  * difference is that `type` values are UPPERCASE (`"string"` → `"STRING"`); we
  * recurse through `properties`/`items`/`anyOf`/`allOf`/`oneOf` and uppercase
- * each scalar `type`. Other keywords pass through (Gemini silently ignores ones
- * it doesn't support); advanced features (null-union types, `$ref`, numeric/
+ * each scalar `type`. `additionalProperties` is dropped (Gemini rejects it with
+ * a 400, while OpenAI strict mode requires it); other keywords pass through
+ * (Gemini ignores ones it doesn't support); advanced features (null-union types, `$ref`, numeric/
  * length constraints) aren't translated — keep schemas within the documented
  * cross-provider subset.
  */
@@ -227,7 +228,11 @@ function toGeminiSchema(schema: unknown): unknown {
   }
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema)) {
-    if (key === "type" && typeof value === "string") {
+    if (key === "additionalProperties") {
+      // Gemini's response_schema rejects this keyword with a 400 (the rest of
+      // the cross-provider subset requires it for OpenAI strict mode). Drop it.
+      continue;
+    } else if (key === "type" && typeof value === "string") {
       out[key] = value.toUpperCase();
     } else if (key === "properties" && isRecord(value)) {
       out[key] = Object.fromEntries(
