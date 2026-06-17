@@ -6,7 +6,7 @@
 - **Never add `Co-Authored-By: Claude`** or any AI-attribution trailer to commits.
 - **Edit loop (run as you go, not at "done"):** after editing a file, run `yarn eslint <path>` (not the full `yarn lint`), `yarn typecheck`, and prettier on it. If the file is covered by Jest tests, run them (`yarn test path/to/file.test.ts`) before declaring done.
 - Keep `CLAUDE.md` updated and **compact** — it's instructions, not docs. Record only what an agent can't infer from code (commands, conventions, gotchas, decisions); point to files rather than restate their types. When you add a line, delete or compress a stale one.
-- Keep `README.md`/`CHANGELOG.md` current. Unshipped changes go under `## [Unreleased]` (Keep a Changelog format). Add a dated version heading only at release time: rename `## [Unreleased]` → `## [<version>] - <date>` and put a fresh empty `## [Unreleased]` above it. Categorize (`### Added`/`### Changed`/`### Fixed`) against the last published version — before the first release, everything is `### Added`.
+- Keep `README.md`/`CHANGELOG.md` updated. Unshipped changes go under `## [Unreleased]` (Keep a Changelog format). Add a dated version heading only at release time: rename `## [Unreleased]` → `## [<version>] - <date>` and put a fresh empty `## [Unreleased]` above it. Categorize (`### Added`/`### Changed`/`### Fixed`) against the last published version. Keep the changelog short and clean.
 - Don't run integration tests unless asked — they make live, **paid** API calls.
 - Per-developer instructions live in a gitignored `CLAUDE.local.md` (loads after this file). Keep this file to project-wide facts.
 

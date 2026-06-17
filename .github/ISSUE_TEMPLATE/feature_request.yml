@@ -1,0 +1,63 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Describing the **problem** you're trying to
+        solve (not just a proposed solution) helps us find the best fit for the
+        library's contract.
+
+        For a substantial change — a new provider or combine strategy — please
+        open this issue to discuss the approach **before** sending a PR. See
+        [CONTRIBUTING.md](https://github.com/kodar-anders/combined-ai/blob/main/CONTRIBUTING.md#extending-the-library).
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched [existing issues](https://github.com/kodar-anders/combined-ai/issues?q=is%3Aissue) and this isn't already requested.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and what's getting in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. Include a sketch of the API/usage if you have one.
+      render: typescript
+    validations:
+      required: false
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change is this?
+      options:
+        - New provider
+        - New combine strategy
+        - Change to an existing provider/strategy
+        - New option on the existing contract
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why you ruled them out.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+    validations:
+      required: false
