@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write # required to create the GitHub release
   id-token: write # required for npm provenance
 
 jobs:
@@ -40,7 +40,26 @@ jobs:
       - run: yarn test
 
       # `prepack` (yarn build) runs automatically as part of publish.
+      # Auth is via npm trusted publishing (OIDC) — no token needed.
+      # Yarn 4.9+ performs the OIDC exchange when no YARN_NPM_AUTH_TOKEN is set.
       - name: Publish to npm
         run: yarn npm publish --access public --provenance
+
+      # Create a GitHub release for the tag. Notes come from the matching
+      # CHANGELOG.md section (## [<version>] ...); if that section is empty,
+      # fall back to auto-generated notes from commits/PRs.
+      - name: Create GitHub release
         env:
-          YARN_NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$TAG_VERSION" '
+            $0 ~ "^## \\[" ver "\\]" {grab=1; next}
+            grab && /^## / {exit}
+            grab {print}
+          ' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ] && grep -q '[^[:space:]]' release-notes.md; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
