@@ -784,6 +784,7 @@ Planned, roughly in priority order (subject to change):
 - **Streaming in `combine`** — incremental progress across phases.
 - **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no added dependency.
 - **Minority-veto consensus** policy.
+- **More providers** — Amazon Bedrock (distinct API, enterprise reach); possibly Azure OpenAI. (OpenAI-compatible APIs are already supported via custom providers.)
 
 ## Changelog
 
