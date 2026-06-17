@@ -30,6 +30,16 @@ export type {
 export { ProviderError, type ProviderErrorKind } from "./errors";
 export { type RetryOptions } from "./transport";
 
+export { costOf, costOfUsage, type CostBreakdown } from "./cost";
+export {
+  findModel,
+  listModels,
+  PRICING_VERIFIED_ON,
+  type CostOptions,
+  type ModelInfo,
+  type ModelPricing,
+} from "./models";
+
 export { type AnthropicProviderOptions } from "./providers/anthropic";
 export { type OpenAIProviderOptions } from "./providers/openai";
 export { type GoogleProviderOptions } from "./providers/google";

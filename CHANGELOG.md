@@ -7,6 +7,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Cost & pricing layer** (`src/cost.ts`, `src/models.ts`): `costOf(result)` and
+  `costOfUsage(usage, model)` turn token usage into a `CostBreakdown` in USD, using
+  a tiny built-in pricing registry. `findModel`/`listModels` expose the registry
+  and `PRICING_VERIFIED_ON` dates it. Resolution maps dated snapshots / `modelVersion`
+  to their base entry but declines differently-priced siblings (e.g. `gpt-4.1-nano`,
+  `gemini-2.5-flash-lite`) rather than mis-pricing them. Tiered pricing is supported
+  (Gemini 2.5 Pro's >200k-token tier); Gemini thinking tokens are billed at the
+  output rate. Returns `undefined` (never throws) for an unknown model, missing
+  usage, or empty/malformed usage. Pass `options.models` to extend or correct prices
+  without a release.
+
 ## [0.1.1] - 2026-06-17
 
 ### Fixed

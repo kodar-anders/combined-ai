@@ -48,6 +48,7 @@ console.log(result.text);
   - [Custom & gateway providers](#custom--gateway-providers)
   - [Request options](#request-options)
   - [Result fields](#result-fields)
+  - [Cost & pricing](#cost--pricing)
   - [Structured output](#structured-output)
   - [Tool calling](#tool-calling)
   - [Multimodal input](#multimodal-input)
@@ -535,6 +536,41 @@ if (finishReason === "length") {
 }
 ```
 
+### Cost & pricing
+
+`costOf(result)` turns the token `usage` a completion reports into a dollar
+`CostBreakdown`, using a tiny built-in pricing registry:
+
+```ts
+import { costOf } from "combined-ai";
+
+const result = await registry.select("anthropic").complete({ messages });
+const cost = costOf(result);
+// → { model: "claude-opus-4-8", inputCost, outputCost, totalCost } | undefined
+if (cost) console.log(`$${cost.totalCost.toFixed(4)}`);
+```
+
+It returns `undefined` (never throws) when the model isn't in the registry or the
+result carries no `usage` — both normal for custom/gateway providers. `costOfUsage(usage, model)`
+is the same calculation from a raw `Usage` + model id.
+
+The registry resolves dated snapshots and Gemini `modelVersion` strings to their
+base entry (e.g. `gpt-4.1-2025-04-14` → `gpt-4.1`), and bills Gemini thinking
+tokens at the output rate. Costs are raw floating-point USD — round at display.
+
+**Prices are best-effort and hand-maintained** (a small table of the most common
+models across the three providers, not an exhaustive catalog), dated by
+`PRICING_VERIFIED_ON`. Correct a stale price or add your own model with
+`options.models` — no library release needed:
+
+```ts
+costOf(result, {
+  models: { "my-model": { inputPerMTok: 0.5, outputPerMTok: 1.5 } },
+});
+```
+
+`findModel(id)` and `listModels()` expose the registry directly.
+
 ### Structured output
 
 Pass `responseFormat` with a **plain JSON Schema** (no Zod, no runtime
@@ -732,6 +768,9 @@ Exported from the package entry point:
   `ParticipantOutcome`, `StrategyName`, `CombineOptions`, `CombineEvent`, and the
   strategy-generic utilities `StrategyRequest<S>` / `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
+- Cost & pricing: `costOf`, `costOfUsage`, `findModel`, `listModels`,
+  `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CostOptions`, `ModelInfo`,
+  `ModelPricing` (types).
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GoogleProvider`) are **not** exported — the registry constructs them internally.
@@ -773,9 +812,8 @@ cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
 Planned, roughly in priority order (subject to change):
 
-- **Cost & pricing layer** — a `costOf(result)` helper plus a small model registry (per-token pricing, context windows, capability flags).
-- **Combine budgets** — per-combine cost totals and an optional budget cap.
-- **Prompt caching** — surface provider-native prompt caching and cached-token usage.
+- **Combine budgets** — per-combine cost totals (`combineCost`, pricing each participant's calls) and an optional budget cap that aborts remaining participants when exceeded.
+- **Prompt caching** — surface provider-native prompt caching and cached-token usage, with cached reads priced at the discounted rate in `costOf`.
 - **Embeddings** — unified `embed` / `embedMany` (plus `cosineSimilarity`).
 - **Test utilities** — a public `MockProvider` with simulated streaming.
 - **Fallback chains** — try the next provider on failure.
@@ -785,6 +823,7 @@ Planned, roughly in priority order (subject to change):
 - **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no added dependency.
 - **Minority-veto consensus** policy.
 - **More providers** — Amazon Bedrock (distinct API, enterprise reach); possibly Azure OpenAI. (OpenAI-compatible APIs are already supported via custom providers.)
+- **Model capability metadata** — extend the registry with per-model `contextWindow`, `maxOutputTokens`, `supportsVision`, `supportsTools`.
 
 ## Changelog
 
