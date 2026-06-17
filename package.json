@@ -60,8 +60,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@jest/globals": "^30.4.1",
-    "@swc/core": "^1.7.0",
-    "@swc/jest": "^0.2.37",
+    "@swc/core": "^1.15.41",
+    "@swc/jest": "^0.2.39",
     "@types/node": "^24",
     "dotenv": "^17.4.2",
     "eslint": "^10.5.0",
@@ -73,14 +73,17 @@
     "globals": "^17.6.0",
     "jest": "^30.4.2",
     "prettier": "^3.8.4",
-    "tsup": "^8.3.0",
+    "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.0"
+  },
+  "resolutions": {
+    "esbuild": "0.28.1",
+    "js-yaml": "4.2.0"
   },
   "packageManager": "yarn@4.16.0",
   "volta": {
     "node": "24.14.0",
     "yarn": "4.16.0"
-  },
-  "private": false
+  }
 }

@@ -7,6 +7,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Security
+
+- Pin transitive dev dependencies via `resolutions` to clear advisories (build/test
+  tooling only — not shipped in the published package): `esbuild` to `0.28.1`
+  (GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr) and `js-yaml` to `4.2.0`
+  (GHSA-h67p-54hq-rp68).
+
+### Changed
+
+- Bump dev dependencies: `tsup` to `^8.5.1`, `@swc/core` to `^1.15.41`,
+  `@swc/jest` to `^0.2.39`.
+
 ## [0.1.0] - 2026-06-17
 
 Initial release: a plain TypeScript library that unifies the Anthropic, OpenAI,
