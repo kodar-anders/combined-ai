@@ -769,6 +769,22 @@ The combine suites (`consensus.integration`, `pipeline.integration`,
 three keys, since they exercise the full multi-model flow. Live tests use cheap models and a small token
 cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
+## Roadmap
+
+Planned, roughly in priority order (subject to change):
+
+- **Cost & pricing layer** — a `costOf(result)` helper plus a small model registry (per-token pricing, context windows, capability flags).
+- **Combine budgets** — per-combine cost totals and an optional budget cap.
+- **Prompt caching** — surface provider-native prompt caching and cached-token usage.
+- **Embeddings** — unified `embed` / `embedMany` (plus `cosineSimilarity`).
+- **Test utilities** — a public `MockProvider` with simulated streaming.
+- **Fallback chains** — try the next provider on failure.
+- **Per-request retry & timeout** overrides.
+- **Token counting** before send.
+- **Streaming in `combine`** — incremental progress across phases.
+- **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no added dependency.
+- **Minority-veto consensus** policy.
+
 ## Changelog
 
 Notable changes are recorded in [CHANGELOG.md](./CHANGELOG.md), following the
