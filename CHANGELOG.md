@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-17
+
 ### Fixed
 
 - Google (Gemini) provider: drop `additionalProperties` from `responseSchema`
