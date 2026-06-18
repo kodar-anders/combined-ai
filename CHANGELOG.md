@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-18
+
 ### Added
 
 - **Combine cost aggregation + budget caps** (`src/combine/cost.ts`, `src/combine`):
