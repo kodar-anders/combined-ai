@@ -24,7 +24,7 @@
  */
 
 import {
-  type CombineEvent,
+  type CombineOptions,
   type CombineRequest,
   type EnsembleAgreement,
   type EnsembleResult,
@@ -46,9 +46,12 @@ import {
 export async function ensemble(
   roster: RosterEntry[],
   request: CombineRequest,
-  onEvent?: (event: CombineEvent) => void,
+  options?: CombineOptions,
 ): Promise<EnsembleResult> {
-  const emit = makeEmitter(onEvent);
+  const emit = makeEmitter(options?.onEvent);
+  // `options.budget` is accepted for a uniform API but inert here: a single
+  // parallel fan-out has no later phase to gate, so there is nothing to pre-empt.
+  // Price the run after the fact with `combineCost(result)` instead.
 
   // Every participant answers the same prompt under the same schema, in parallel.
   // completionFor (inside respondAll) carries responseFormat through, so each

@@ -326,7 +326,7 @@ discriminated on `strategy`:
 const strategy = pickStrategyAtRuntime(); // : StrategyName
 const result = await registry.combine({ messages, participants, strategy });
 
-result.usage; // { total, byParticipant } — aggregated token usage, or undefined
+result.usage; // { total, byParticipant, calls } — aggregated token usage, or undefined
 
 if (result.strategy === "consensus") {
   result.text; // the final synthesized answer
@@ -384,6 +384,11 @@ await registry.combine(
         case "response": // ensemble, broadcast
           console.log(`  ${event.provider}: ${event.status}`); // "ok" | "failed"
           break;
+        case "budget": // a phase was skipped to stay near budget (see below)
+          console.log(
+            `  budget: skipped ${event.skipped ?? "(under-enforced)"}`,
+          );
+          break;
       }
     },
   },
@@ -392,6 +397,46 @@ await registry.combine(
 
 Errors thrown from `onEvent` are swallowed so a listener can't break the run, and
 there is no terminal event (the result is the return value).
+
+### Combine cost & budgets
+
+A combine makes several model calls, so `costOf` (single-result) isn't enough.
+`combineCost(result, options?)` prices a finished run in USD, summing **each call
+individually** from the result's per-call `usage.calls` ledger — the only correct
+way to price it (summing a participant's calls then pricing the sum would mishandle
+tiered rates and thinking residuals).
+
+```ts
+import { combineCost } from "combined-ai";
+
+const result = await registry.combine({ messages, participants });
+const cost = combineCost(result); // { totalCost, byParticipant } in USD, or undefined
+```
+
+It returns `undefined` when nothing is priceable (no usage, or every call's model is
+unknown to the registry). Calls whose model the registry doesn't know are skipped, so
+`totalCost` can understate a mixed run — pass `options.models` (the same override as
+`costOf`) to price custom-provider models.
+
+Pass a **budget** to cap spend. It's a best-effort _soft floor on optional work_, not a
+hard cap: the phases required to produce an answer (consensus drafts + synthesis, the
+pipeline's first stage) always run, so realized cost can exceed it — but once the
+running cost crosses the ceiling, the run skips its _optional_ phases (consensus
+critiques/sanitize, pipeline refiners/sanitize) and emits a `budget` event.
+
+```ts
+await registry.combine(
+  { messages, participants: ["anthropic", "openai", "gemini"] },
+  { budget: { usd: 0.05, models: myPricingOverrides } },
+);
+```
+
+Cost is priced with the built-in registry; pass `budget.models` to price custom
+models (a call that can't be priced contributes 0 — a budget over an all-uncatalogued
+roster never triggers, surfaced once as a `budget` event with `underEnforced: true`).
+Budget on the `ensemble`/`broadcast` strategies is accepted for a uniform API but
+**inert** — their single parallel fan-out has no later phase to pre-empt, so they
+emit no `budget` event; price a finished run with `combineCost(result)` instead.
 
 ## Single-provider usage
 
@@ -765,12 +810,13 @@ Exported from the package entry point:
   `BroadcastRequest`; plus `ParticipantSpec`.
 - Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
   `EnsembleResult` | `BroadcastResult`), `EnsembleAgreement`, `CombineUsage`,
-  `ParticipantOutcome`, `StrategyName`, `CombineOptions`, `CombineEvent`, and the
-  strategy-generic utilities `StrategyRequest<S>` / `ResultFor<S>`.
+  `CallUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
+  `CombineBudget`, `CombineEvent`, and the strategy-generic utilities
+  `StrategyRequest<S>` / `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
-- Cost & pricing: `costOf`, `costOfUsage`, `findModel`, `listModels`,
-  `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CostOptions`, `ModelInfo`,
-  `ModelPricing` (types).
+- Cost & pricing: `costOf`, `costOfUsage`, `combineCost`, `findModel`, `listModels`,
+  `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`, `CostOptions`,
+  `ModelInfo`, `ModelPricing` (types).
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GoogleProvider`) are **not** exported — the registry constructs them internally.
@@ -812,7 +858,6 @@ cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
 Planned, roughly in priority order (subject to change):
 
-- **Combine budgets** — per-combine cost totals (`combineCost`, pricing each participant's calls) and an optional budget cap that aborts remaining participants when exceeded.
 - **Prompt caching** — surface provider-native prompt caching and cached-token usage, with cached reads priced at the discounted rate in `costOf`.
 - **Embeddings** — unified `embed` / `embedMany` (plus `cosineSimilarity`).
 - **Test utilities** — a public `MockProvider` with simulated streaming.

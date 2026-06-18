@@ -16,7 +16,7 @@
  */
 
 import {
-  type CombineEvent,
+  type CombineOptions,
   type CombineRequest,
   type ParticipantOutcome,
   type PipelineResult,
@@ -25,6 +25,7 @@ import {
   aggregateUsage,
   composeSystem,
   completionFor,
+  makeBudget,
   makeEmitter,
   noResultError,
   outcomeUsage,
@@ -32,6 +33,7 @@ import {
   type RosterEntry,
   runOutcome,
   sanitizeAnswer,
+  type UsageEntry,
 } from "./shared";
 
 /**
@@ -89,9 +91,10 @@ type Running = {
 export async function pipeline(
   roster: RosterEntry[],
   request: CombineRequest,
-  onEvent?: (event: CombineEvent) => void,
+  options?: CombineOptions,
 ): Promise<PipelineResult> {
-  const emit = makeEmitter(onEvent);
+  const emit = makeEmitter(options?.onEvent);
+  const budget = makeBudget(options?.budget, emit);
 
   const question = renderConversation(request.messages);
   const firstSystem = composeSystem(request.system, PIPELINE_FIRST_FRAMING);
@@ -101,6 +104,16 @@ export async function pipeline(
   let current: Running | undefined;
 
   for (const [index, entry] of roster.entries()) {
+    // A refiner (any stage once we have a running answer) is optional: if the
+    // budget is spent, stop refining and finalize the current answer. The first
+    // stage (no running answer yet) always runs so the pipeline yields an answer.
+    if (
+      current !== undefined &&
+      budget.gate("refine", { id: entry.id, index })
+    ) {
+      break;
+    }
+
     // The first stage that has a running answer to build on refines; a leading
     // run of failed stages each start fresh until one produces an answer.
     const completion =
@@ -129,6 +142,7 @@ export async function pipeline(
       status: outcome.status,
       index,
     });
+    budget.add(outcomeUsage([outcome]));
 
     // A stage advances the running answer only if it produced non-empty text;
     // otherwise the previous answer carries forward unchanged.
@@ -152,27 +166,33 @@ export async function pipeline(
     );
   }
 
-  // Strip any process narration a refining stage may have leaked. Skipped when
-  // the answer needs no sanitizing (a lone first-stage answer, or an unchanged
-  // passthrough), so the extra model call only runs when it can matter.
-  const sanitized = current.needsSanitize
-    ? await sanitizeAnswer(
-        current.entry.provider,
-        request,
-        current.text,
-        current.entry,
-      )
-    : { text: current.text };
+  // Strip any process narration a refining stage may have leaked. Skipped when the
+  // answer needs no sanitizing (a lone first-stage answer, or an unchanged
+  // passthrough) — and also skipped when the budget is spent, since sanitize is an
+  // optional polish. The extra model call only runs when it can matter and is affordable.
+  let finalText = current.text;
+  let sanitizeEntry: UsageEntry = { id: current.entry.id };
+  if (current.needsSanitize && !budget.gate("sanitize")) {
+    const sanitized = await sanitizeAnswer(
+      current.entry.provider,
+      request,
+      current.text,
+      current.entry,
+    );
+    finalText = sanitized.text;
+    sanitizeEntry = {
+      id: current.entry.id,
+      model: sanitized.model,
+      usage: sanitized.usage,
+    };
+  }
 
   return {
-    text: sanitized.text,
+    text: finalText,
     strategy: "pipeline",
     finalParticipant: current.entry.id,
     model: current.model,
     stages,
-    usage: aggregateUsage([
-      ...outcomeUsage(stages),
-      { id: current.entry.id, usage: sanitized.usage },
-    ]),
+    usage: aggregateUsage([...outcomeUsage(stages), sanitizeEntry]),
   };
 }

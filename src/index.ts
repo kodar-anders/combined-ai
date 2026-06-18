@@ -31,6 +31,7 @@ export { ProviderError, type ProviderErrorKind } from "./errors";
 export { type RetryOptions } from "./transport";
 
 export { costOf, costOfUsage, type CostBreakdown } from "./cost";
+export { combineCost, type CombineCost } from "./combine/cost";
 export {
   findModel,
   listModels,
@@ -57,6 +58,8 @@ export {
 export type {
   BroadcastRequest,
   BroadcastResult,
+  CallUsage,
+  CombineBudget,
   CombineEvent,
   CombineOptions,
   CombineRequest,

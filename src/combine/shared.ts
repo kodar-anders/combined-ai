@@ -5,12 +5,16 @@
  */
 
 import {
+  type CallUsage,
+  type CombineBudget,
   type CombineEvent,
   type CombineRequest,
   type CombineUsage,
   type ParticipantOutcome,
 } from "./index";
+import { costOfUsage } from "../cost";
 import { aggregateError } from "../errors";
+import { type CostOptions } from "../models";
 import { type ProviderName } from "../registry";
 import {
   type CompletionRequest,
@@ -199,7 +203,7 @@ export async function sanitizeAnswer(
   request: CombineRequest,
   answer: string,
   overrides?: ParticipantOverrides,
-): Promise<{ text: string; usage?: Usage }> {
+): Promise<{ text: string; model?: string; usage?: Usage }> {
   try {
     const result = await provider.complete(
       completionFor(
@@ -209,30 +213,57 @@ export async function sanitizeAnswer(
         overrides,
       ),
     );
-    // The call was billed whether or not we keep its output, so report its usage.
+    // The call was billed whether or not we keep its output, so report its model
+    // and usage (so it lands in the per-call ledger and is priced).
     return {
       text: result.text.trim() === "" ? answer : result.text,
+      model: result.model,
       usage: result.usage,
     };
   } catch {
+    // No call completed (it threw) → no model/usage to report.
     return { text: answer };
   }
 }
 
-/** A single model call's token usage, attributed (by id) to the participant that made it. */
-export type UsageEntry = { id: string; usage?: Usage };
+/**
+ * A single model call's token usage, attributed (by id) to the participant that
+ * made it. `model` is the model that call actually used (`result.model`), kept so
+ * the call can be priced individually (see {@link CombineUsage.calls}); both
+ * `model` and `usage` are absent for a call that failed or reported no usage.
+ */
+export type UsageEntry = { id: string; model?: string; usage?: Usage };
 
-/** Map per-participant outcomes to usage entries (a failed outcome has no usage). */
+/**
+ * Map per-participant outcomes to usage entries (a failed outcome has neither
+ * model nor usage; an `ok` outcome always carries its `result.model`).
+ */
 export function outcomeUsage(outcomes: ParticipantOutcome[]): UsageEntry[] {
   return outcomes.map((o) => ({
     id: o.id,
+    model: o.status === "ok" ? o.result.model : undefined,
     usage: o.status === "ok" ? o.result.usage : undefined,
   }));
 }
 
 /**
- * Sum per-call usages into a {@link CombineUsage} (overall total + per-participant
- * breakdown). Entries with no usage are ignored; returns `undefined` if no call
+ * The priceable per-call entries: those carrying **both** `model` and `usage`, as
+ * {@link CallUsage}. Failed outcomes (no model/usage) and ok calls that reported no
+ * usage are dropped. Used to feed the per-call ledger and the {@link BudgetTracker}.
+ */
+export function callUsages(entries: UsageEntry[]): CallUsage[] {
+  return entries.flatMap((e) =>
+    e.model !== undefined && e.usage !== undefined
+      ? [{ id: e.id, model: e.model, usage: e.usage }]
+      : [],
+  );
+}
+
+/**
+ * Sum per-call usages into a {@link CombineUsage}: the overall `total`, the
+ * per-participant `byParticipant` breakdown, and the per-call `calls` ledger.
+ * Entries with no usage are ignored for `total`/`byParticipant`; `calls` holds only
+ * the priceable entries (see {@link callUsages}). Returns `undefined` if no call
  * reported any usage at all.
  */
 export function aggregateUsage(
@@ -257,7 +288,95 @@ export function aggregateUsage(
   // byParticipant is non-empty iff at least one entry carried usage.
   return Object.keys(byParticipant).length === 0
     ? undefined
-    : { total, byParticipant };
+    : { total, byParticipant, calls: callUsages(entries) };
+}
+
+/**
+ * Tracks running combine cost against an optional {@link CombineBudget}. `add`
+ * prices each settled call (per call — never a summed block, which would mishandle
+ * tiered rates) and accumulates the dollars; `exceeded()` reports whether the
+ * running cost reached the ceiling. A call that can't be priced (unknown model, or
+ * no usage) contributes 0; the first such call under a budget emits a one-shot
+ * `budget` event with `underEnforced: true`, so a budget silently doing nothing
+ * over uncatalogued models is observable. With no budget configured the tracker is
+ * a no-op that never exceeds (so callers need no special-casing).
+ */
+export type BudgetTracker = {
+  /**
+   * Price the priceable entries (those carrying both `model` and `usage`; see
+   * {@link callUsages}) into the running total. Accepts the loose {@link UsageEntry}
+   * list strategies already build, so callers don't pre-filter.
+   */
+  add: (entries: UsageEntry[]) => void;
+  /**
+   * Budget-gate an optional phase. If the budget is spent, emit a `budget` skip
+   * event naming `skipped` (with optional `id`/`index` for a pipeline refiner
+   * stage) and return `true` so the caller skips that phase; otherwise return
+   * `false`. A no-op tracker (no budget configured) always returns `false`, so
+   * strategies gate uniformly without re-checking whether a budget was set.
+   */
+  gate: (
+    skipped: "critiques" | "refine" | "sanitize",
+    extra?: { id?: string; index?: number },
+  ) => boolean;
+};
+
+/** Build a {@link BudgetTracker} for `budget` (a no-op tracker when it's undefined). */
+export function makeBudget(
+  budget: CombineBudget | undefined,
+  emit: (event: CombineEvent) => void,
+): BudgetTracker {
+  if (budget === undefined) {
+    return {
+      add: () => {
+        // No budget configured: nothing to track.
+      },
+      gate: () => false,
+    };
+  }
+  const options: CostOptions = { models: budget.models };
+  let spent = 0;
+  let warned = false;
+  // Gate on *priced* spend: until a call actually prices (spent > 0) the budget
+  // has measured nothing, so it never triggers — this is what makes a budget over
+  // an entirely unpriceable roster inert (and keeps a `usd: 0` budget from skipping
+  // optional work it never measured a cost for).
+  const exceeded = (): boolean => spent > 0 && spent >= budget.usd;
+  return {
+    add(entries) {
+      for (const call of callUsages(entries)) {
+        const cost = costOfUsage(call.usage, call.model, options);
+        if (cost === undefined) {
+          // Can't price this call → it contributes 0, so the budget is now
+          // incomplete. Warn once so the under-enforcement isn't silent.
+          if (!warned) {
+            warned = true;
+            emit({
+              type: "budget",
+              spentUsd: spent,
+              budgetUsd: budget.usd,
+              underEnforced: true,
+            });
+          }
+          continue;
+        }
+        spent += cost.totalCost;
+      }
+    },
+    gate(skipped, extra) {
+      if (!exceeded()) {
+        return false;
+      }
+      emit({
+        type: "budget",
+        spentUsd: spent,
+        budgetUsd: budget.usd,
+        skipped,
+        ...extra,
+      });
+      return true;
+    },
+  };
 }
 
 /**

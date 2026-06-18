@@ -466,6 +466,34 @@ describe("ProviderRegistry.combine", () => {
       result.responses.map((o) => (o.status === "ok" ? o.result.text : null)),
     ).toEqual(["fast says hi", "smart says hi"]);
   });
+
+  it("accepts a budget on every strategy (incl. the fan-out ones)", async () => {
+    const echo: Provider = {
+      name: "mine",
+      complete: (): Promise<CompletionResult> =>
+        Promise.resolve({ text: "hi", model: "m" }),
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+    const participants = [
+      { provider: "mine", model: "a" },
+      { provider: "mine", model: "b" },
+    ];
+
+    // No strategy rejects `budget` — it's informational on the fan-out strategies.
+    for (const strategy of ["consensus", "pipeline", "broadcast"] as const) {
+      await expect(
+        registry.combine(
+          { ...PROMPT, strategy, participants },
+          { budget: { usd: 1 } },
+        ),
+      ).resolves.toBeDefined();
+    }
+  });
 });
 
 describe("ProviderRegistry per-strategy methods", () => {

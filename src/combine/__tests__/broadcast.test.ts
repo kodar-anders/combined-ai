@@ -167,7 +167,7 @@ describe("broadcast", () => {
     await broadcast(
       roster,
       request({ participants: ["anthropic", "openai"] }),
-      (event) => events.push(event),
+      { onEvent: (event) => events.push(event) },
     );
 
     expect(events).toContainEqual({
@@ -243,5 +243,31 @@ describe("broadcast", () => {
       outputTokens: 5,
       totalTokens: 15,
     });
+  });
+
+  it("accepts budget but is inert on the fan-out (no pre-empting, no budget event)", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const big: Usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      totalTokens: 1_000_000,
+    };
+    const roster = [
+      entry("anthropic", fakeProvider("anthropic", calls, { usage: big })),
+      entry("openai", fakeProvider("openai", calls, { usage: big })),
+    ];
+
+    const result = await broadcast(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      // A tiny budget can't gate a single parallel burst, so it does nothing here.
+      { budget: { usd: 0.000_001 }, onEvent: (event) => events.push(event) },
+    );
+
+    // Both participants still answered, and no budget event is emitted (the
+    // fan-out strategies have no phase to gate, so the budget stays inert).
+    expect(result.responses).toHaveLength(2);
+    expect(events.some((e) => e.type === "budget")).toBe(false);
   });
 });

@@ -574,8 +574,10 @@ describe("pipeline", () => {
     await pipeline(
       roster,
       { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
-      (event) => {
-        events.push(event);
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
       },
     );
 
@@ -623,8 +625,10 @@ describe("pipeline", () => {
     const result = await pipeline(
       roster,
       { ...PROMPT, participants: ["anthropic", "openai"] },
-      () => {
-        throw new Error("listener boom");
+      {
+        onEvent: () => {
+          throw new Error("listener boom");
+        },
       },
     );
 
@@ -663,5 +667,88 @@ describe("pipeline", () => {
     // ...and openai's refine (and its sanitize pass) under openai's.
     const openaiCalls = calls.filter((c) => c.provider === "openai");
     expect(openaiCalls.every((c) => c.request.model === "gpt-x")).toBe(true);
+  });
+});
+
+describe("pipeline cost ledger + budget", () => {
+  const tok = (n: number): Usage => ({
+    inputTokens: n,
+    outputTokens: 0,
+    totalTokens: n,
+  });
+  const cheapModels = {
+    "anthropic-model": { inputPerMTok: 1, outputPerMTok: 0 },
+    "openai-model": { inputPerMTok: 1, outputPerMTok: 0 },
+    "gemini-model": { inputPerMTok: 1, outputPerMTok: 0 },
+  };
+  const roster = (names: string[], calls: Call[]) =>
+    names.map((name) => ({
+      id: name,
+      providerName: name as "anthropic" | "openai" | "gemini",
+      provider: fakeProvider(name, calls, undefined, undefined, tok(1_000_000)),
+    }));
+
+  it("records every stage and the sanitize pass in usage.calls", async () => {
+    const calls: Call[] = [];
+    const result = await pipeline(roster(["anthropic", "openai"], calls), {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    // first (anthropic) + refine (openai) + sanitize (openai) = 3 ledger entries.
+    expect(result.usage?.calls).toEqual([
+      { id: "anthropic", model: "anthropic-model", usage: tok(1_000_000) },
+      { id: "openai", model: "openai-model", usage: tok(1_000_000) },
+      { id: "openai", model: "openai-model", usage: tok(1_000_000) },
+    ]);
+  });
+
+  it("stops refining mid-conveyor once the budget is spent", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const result = await pipeline(
+      roster(["anthropic", "openai", "gemini"], calls),
+      { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
+      {
+        // The first stage ($1) already exceeds $0.5, so no refiner launches.
+        budget: { usd: 0.5, models: cheapModels },
+        onEvent: (event) => events.push(event),
+      },
+    );
+
+    expect(calls.filter((c) => c.phase === "first")).toHaveLength(1);
+    expect(calls.filter((c) => c.phase === "refine")).toHaveLength(0);
+    expect(calls.filter((c) => c.phase === "sanitize")).toHaveLength(0);
+    expect(result.text).toBe("anthropic:first");
+    expect(result.finalParticipant).toBe("anthropic");
+
+    // The skip event names the stage that didn't run.
+    const skip = events.flatMap((e) =>
+      e.type === "budget" && e.skipped === "refine" ? [e] : [],
+    );
+    expect(skip).toHaveLength(1);
+    expect(skip[0]?.id).toBe("openai");
+    expect(skip[0]?.index).toBe(1);
+  });
+
+  it("skips only the final sanitize when the budget runs out after refining", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    await pipeline(
+      roster(["anthropic", "openai"], calls),
+      { ...PROMPT, participants: ["anthropic", "openai"] },
+      {
+        // first ($1) + refine ($1) = $2 affordable; sanitize would push over $2.
+        budget: { usd: 2, models: cheapModels },
+        onEvent: (event) => events.push(event),
+      },
+    );
+
+    expect(calls.filter((c) => c.phase === "refine")).toHaveLength(1);
+    expect(calls.filter((c) => c.phase === "sanitize")).toHaveLength(0);
+    const skipped = events.flatMap((e) =>
+      e.type === "budget" && e.skipped !== undefined ? [e.skipped] : [],
+    );
+    expect(skipped).toEqual(["sanitize"]);
   });
 });

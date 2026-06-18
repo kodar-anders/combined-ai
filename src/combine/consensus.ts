@@ -9,7 +9,7 @@
  */
 
 import {
-  type CombineEvent,
+  type CombineOptions,
   type CombineRequest,
   type ConsensusResult,
   type ParticipantOutcome,
@@ -18,6 +18,7 @@ import {
   aggregateUsage,
   composeSystem,
   completionFor,
+  makeBudget,
   makeEmitter,
   noResultError,
   outcomeUsage,
@@ -88,11 +89,12 @@ export async function consensus(
   roster: RosterEntry[],
   synthesizer: string,
   request: CombineRequest,
-  onEvent?: (event: CombineEvent) => void,
+  options?: CombineOptions,
 ): Promise<ConsensusResult> {
   const anonymized = (request.attribution ?? "anonymized") === "anonymized";
   const minParticipants = request.minParticipants ?? 2;
-  const emit = makeEmitter(onEvent);
+  const emit = makeEmitter(options?.onEvent);
+  const budget = makeBudget(options?.budget, emit);
 
   // ── Phase 1: drafts (parallel fan-out) ──
   emit({ type: "phase", phase: "drafting" });
@@ -114,6 +116,8 @@ export async function consensus(
     }),
   );
   const drafts: ParticipantOutcome[] = draftResults.map((d) => d.outcome);
+  // Price the drafts toward the budget; the critique/sanitize phases below check it.
+  budget.add(outcomeUsage(drafts));
 
   // Keep only drafts that succeeded AND produced non-empty text: an empty draft
   // (e.g. Gemini spending its whole budget on thinking) would otherwise count
@@ -154,35 +158,43 @@ export async function consensus(
   }
 
   // ── Phase 2: critiques (parallel fan-out over survivors) ──
-  emit({ type: "phase", phase: "critiquing" });
-  const answersBlock = renderAnswers(survivors, anonymized);
+  // Critiques are an optional refinement: if the budget is already spent, skip the
+  // whole burst and go straight to synthesis (which still runs, so the run always
+  // yields an answer). The skip is whole-burst — a parallel fan-out can't be gated
+  // mid-flight, only before it launches.
   const question = renderConversation(request.messages);
+  const answersBlock = renderAnswers(survivors, anonymized);
   const critiqueBody = `## Original question\n${question}\n\n## Drafts\n${answersBlock}`;
-  const critiqueSystem = composeSystem(
-    request.system,
-    `${CONCISE_DIRECTIVE}\n\n${CRITIQUE_FRAMING}`,
-  );
-  const critiques: ParticipantOutcome[] = await Promise.all(
-    survivors.map(async (s) => {
-      const outcome = await runOutcome(s.id, s.providerName, () =>
-        s.provider.complete(
-          completionFor(
-            request,
-            critiqueSystem,
-            [{ role: "user", content: critiqueBody }],
-            s,
+  let critiques: ParticipantOutcome[] = [];
+  if (!budget.gate("critiques")) {
+    emit({ type: "phase", phase: "critiquing" });
+    const critiqueSystem = composeSystem(
+      request.system,
+      `${CONCISE_DIRECTIVE}\n\n${CRITIQUE_FRAMING}`,
+    );
+    critiques = await Promise.all(
+      survivors.map(async (s) => {
+        const outcome = await runOutcome(s.id, s.providerName, () =>
+          s.provider.complete(
+            completionFor(
+              request,
+              critiqueSystem,
+              [{ role: "user", content: critiqueBody }],
+              s,
+            ),
           ),
-        ),
-      );
-      emit({
-        type: "critique",
-        id: s.id,
-        provider: s.providerName,
-        status: outcome.status,
-      });
-      return outcome;
-    }),
-  );
+        );
+        emit({
+          type: "critique",
+          id: s.id,
+          provider: s.providerName,
+          status: outcome.status,
+        });
+        return outcome;
+      }),
+    );
+    budget.add(outcomeUsage(critiques));
+  }
   // ── Phase 3: synthesis (single call, one fallback hop per remaining survivor) ──
   emit({ type: "phase", phase: "synthesizing" });
   const critiquesRendered = renderCritiques(critiques, anonymized);
@@ -206,24 +218,41 @@ export async function consensus(
           candidate,
         ),
       );
-      synthUsage.push({ id: candidate.id, usage: result.usage });
+      // Every synth attempt is billed (including discarded empty ones below), so
+      // record its model+usage and price it toward the budget.
+      const synthEntry: UsageEntry = {
+        id: candidate.id,
+        model: result.model,
+        usage: result.usage,
+      };
+      synthUsage.push(synthEntry);
+      budget.add([synthEntry]);
       // A resolved-but-empty synthesis (e.g. Gemini consuming the whole token
       // budget on thinking) is treated as a failure so the next survivor is tried.
       if (result.text.trim() === "") {
         lastError = new Error(`${candidate.id} produced an empty synthesis`);
         continue;
       }
-      // Second pass strips any process narration the synthesis framing
-      // failed to suppress (e.g. "synthesizes the drafts", "Answer A").
-      const sanitized = await sanitizeAnswer(
-        candidate.provider,
-        request,
-        result.text,
-        candidate,
-      );
-      synthUsage.push({ id: candidate.id, usage: sanitized.usage });
+      // Second pass strips any process narration the synthesis framing failed to
+      // suppress (e.g. "synthesizes the drafts", "Answer A"). Skipped (answer kept
+      // as-is) when the budget is spent — sanitize is an optional polish, not load-bearing.
+      let finalText = result.text;
+      if (!budget.gate("sanitize")) {
+        const sanitized = await sanitizeAnswer(
+          candidate.provider,
+          request,
+          result.text,
+          candidate,
+        );
+        synthUsage.push({
+          id: candidate.id,
+          model: sanitized.model,
+          usage: sanitized.usage,
+        });
+        finalText = sanitized.text;
+      }
       return {
-        text: sanitized.text,
+        text: finalText,
         strategy: "consensus",
         synthesizer: candidate.id,
         model: result.model,

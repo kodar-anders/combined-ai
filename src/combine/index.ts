@@ -5,6 +5,7 @@
  * {@link ProviderRegistry.combine}.
  */
 
+import { type CostOptions } from "../models";
 import { type ProviderName } from "../registry";
 import {
   type CompletionRequest,
@@ -150,6 +151,21 @@ export type ParticipantOutcome =
   | { id: string; provider: ProviderName; status: "failed"; error: Error };
 
 /**
+ * One model call's token usage, tagged with the participant `id` that made it and
+ * the `model` it used. Keeping each call's own model (rather than the pre-summed
+ * {@link CombineUsage.byParticipant}) is what lets `combineCost` price calls
+ * individually — see `combineCost` for why that's the only correct way.
+ */
+export type CallUsage = {
+  /** The participant id that made this call. */
+  id: string;
+  /** The model this call actually used (its `result.model`). */
+  model: string;
+  /** This call's token usage. */
+  usage: Usage;
+};
+
+/**
  * Aggregated token usage across all the model calls a combine made — the true
  * cost of a run, which is several times one completion (a default 3-way
  * consensus is ~8 calls: 3 drafts + 3 critiques + synthesis + sanitize).
@@ -160,6 +176,14 @@ export type CombineUsage = {
   total: Usage;
   /** Usage per participant id, summed across all of that participant's calls. */
   byParticipant: Partial<Record<string, Usage>>;
+  /**
+   * Every billed model call, in completion order, each tagged with its model and
+   * usage. The per-call ledger `combineCost` prices (see {@link CallUsage}); it
+   * holds only calls that reported usage. The default consensus run records its
+   * drafts, critiques, synthesis (one entry per attempt, including discarded
+   * fallback attempts), and the sanitize pass.
+   */
+  calls: CallUsage[];
 };
 
 /** The result of the `consensus` strategy (draft → critique → synthesize). */
@@ -314,7 +338,52 @@ export type CombineEvent =
       id: string;
       provider: ProviderName;
       status: "ok" | "failed";
+    }
+  | {
+      /**
+       * A {@link CombineBudget} signal. Two cases, distinguished by which field is
+       * set:
+       * - **skip** (`skipped` set): the running cost crossed `budgetUsd`, so an
+       *   *optional* phase was dropped to stay near budget — consensus
+       *   `"critiques"`/`"sanitize"`, or a pipeline `"refine"` stage/`"sanitize"`.
+       *   For a skipped pipeline refiner, `id`/`index` identify the stage not run.
+       *   Required phases still run, so `spentUsd` can exceed `budgetUsd`.
+       * - **under-enforced** (`underEnforced: true`): emitted once when a settled
+       *   call couldn't be priced (unknown model, or no usage reported) and so
+       *   contributes 0 to `spentUsd`. The budget is then incomplete and may never
+       *   trigger — pass `budget.models` to price custom models.
+       *
+       * `spentUsd` is the cost priced so far; `budgetUsd` is the configured ceiling.
+       */
+      type: "budget";
+      spentUsd: number;
+      budgetUsd: number;
+      skipped?: "critiques" | "refine" | "sanitize";
+      underEnforced?: boolean;
+      id?: string;
+      index?: number;
     };
+
+/**
+ * An optional spend ceiling for a combine, in USD. **A best-effort soft floor on
+ * *optional* work, not a hard cap on total spend:** in-flight calls and the phases
+ * required to produce an answer (consensus drafts + synthesis, the pipeline's first
+ * stage) always run and bill, so the realized cost can exceed `usd`. Once the
+ * running cost crosses `usd`, the combine launches no further *optional* calls
+ * (consensus critiques/sanitize; pipeline refiners/sanitize) and emits a `budget`
+ * {@link CombineEvent}.
+ *
+ * Cost is priced per call with the built-in pricing registry; pass `models` (the
+ * {@link CostOptions} override) to price models the registry doesn't know. **A call
+ * whose model can't be priced — or that reports no usage — contributes 0 to the
+ * running cost**, so a budget over a roster of entirely uncatalogued models never
+ * triggers; a one-shot `budget` event with `underEnforced: true` is emitted the
+ * first time this happens so the gap is observable. Budget on the
+ * `ensemble`/`broadcast` strategies is accepted for a uniform API but **inert** —
+ * their single parallel fan-out has no later phase to gate, so they emit no
+ * `budget` event; price a finished run with `combineCost(result)` instead.
+ */
+export type CombineBudget = { usd: number } & CostOptions;
 
 export type CombineOptions = {
   /**
@@ -322,4 +391,9 @@ export type CombineOptions = {
    * handler are swallowed so a progress listener can never break the run.
    */
   onEvent?: (event: CombineEvent) => void;
+  /**
+   * An optional USD spend ceiling. See {@link CombineBudget} — it is a soft floor
+   * on optional work, not a hard cap on total spend.
+   */
+  budget?: CombineBudget;
 };

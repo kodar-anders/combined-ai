@@ -222,11 +222,9 @@ describe("ensemble", () => {
       entry("openai", fakeProvider("openai", calls, { fail: true })),
     ];
 
-    await ensemble(
-      roster,
-      request({ participants: ["anthropic", "openai"] }),
-      (event) => events.push(event),
-    );
+    await ensemble(roster, request({ participants: ["anthropic", "openai"] }), {
+      onEvent: (event) => events.push(event),
+    });
 
     expect(events).toContainEqual({
       type: "response",
@@ -269,5 +267,30 @@ describe("ensemble", () => {
     expect(calls.find((c) => c.provider === "openai")?.request.model).toBe(
       "gpt-x",
     );
+  });
+
+  it("accepts budget as informational without pre-empting the fan-out", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris" } }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, { parsed: { city: "Paris" } }),
+      ),
+    ];
+
+    const result = await ensemble(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      { budget: { usd: 0.000_001 } },
+    );
+
+    // A budget can't gate a single parallel burst, so both still answered and the
+    // vote merged as usual.
+    expect(result.responses).toHaveLength(2);
+    expect(result.merged.city).toBe("Paris");
   });
 });

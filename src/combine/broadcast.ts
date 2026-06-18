@@ -15,7 +15,7 @@
 
 import {
   type BroadcastResult,
-  type CombineEvent,
+  type CombineOptions,
   type CombineRequest,
 } from "./index";
 import {
@@ -35,9 +35,12 @@ import {
 export async function broadcast(
   roster: RosterEntry[],
   request: CombineRequest,
-  onEvent?: (event: CombineEvent) => void,
+  options?: CombineOptions,
 ): Promise<BroadcastResult> {
-  const emit = makeEmitter(onEvent);
+  const emit = makeEmitter(options?.onEvent);
+  // `options.budget` is accepted for a uniform API but inert here: a single
+  // parallel fan-out has no later phase to gate, so there is nothing to pre-empt.
+  // Price the run after the fact with `combineCost(result)` instead.
 
   // Every participant answers the same prompt, verbatim, in parallel.
   const responses = await respondAll(roster, request, emit);

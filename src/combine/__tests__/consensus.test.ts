@@ -770,8 +770,10 @@ describe("consensus", () => {
       roster,
       "anthropic",
       { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
-      (event) => {
-        events.push(event);
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
       },
     );
 
@@ -815,8 +817,10 @@ describe("consensus", () => {
       roster,
       "openai",
       { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
-      (event) => {
-        events.push(event);
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
       },
     );
 
@@ -841,8 +845,10 @@ describe("consensus", () => {
       roster,
       "anthropic",
       { ...PROMPT, participants: ["anthropic"] },
-      (event) => {
-        events.push(event);
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
       },
     );
 
@@ -871,8 +877,10 @@ describe("consensus", () => {
       roster,
       "anthropic",
       { ...PROMPT, participants: ["anthropic", "openai"] },
-      () => {
-        throw new Error("listener boom");
+      {
+        onEvent: () => {
+          throw new Error("listener boom");
+        },
       },
     );
 
@@ -952,5 +960,169 @@ describe("consensus", () => {
     // The id-named synthesizer (the "pro" participant) wrote the final answer.
     expect(result.synthesizer).toBe("gemini-pro");
     expect(result.text).toBe("pro:synth");
+  });
+});
+
+describe("consensus cost ledger + budget", () => {
+  const tok = (n: number): Usage => ({
+    inputTokens: n,
+    outputTokens: 0,
+    totalTokens: n,
+  });
+
+  /** Price every fake `<name>-model` at $1 per the call's input MTok. */
+  const cheapModels = {
+    "anthropic-model": { inputPerMTok: 1, outputPerMTok: 0 },
+    "openai-model": { inputPerMTok: 1, outputPerMTok: 0 },
+    "gemini-model": { inputPerMTok: 1, outputPerMTok: 0 },
+  };
+
+  it("records every billed call (incl. a discarded empty-synth attempt) in usage.calls", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        // anthropic is the synthesizer but its synth is empty → falls back to openai.
+        provider: fakeProvider("anthropic", calls, undefined, "synth", tok(10)),
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls, undefined, undefined, tok(10)),
+      },
+    ];
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    expect(result.synthesizer).toBe("openai");
+    // anthropic: draft + critique + discarded empty synth = 3 ledger entries.
+    expect(
+      result.usage?.calls.filter((c) => c.id === "anthropic"),
+    ).toHaveLength(3);
+    // openai: draft + critique + synth + sanitize = 4.
+    expect(result.usage?.calls.filter((c) => c.id === "openai")).toHaveLength(
+      4,
+    );
+    // Every ledger entry carries the model that made it.
+    expect(result.usage?.calls.every((c) => c.model.endsWith("-model"))).toBe(
+      true,
+    );
+  });
+
+  it("populates the ledger on the single-provider early-return path", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider(
+          "anthropic",
+          calls,
+          undefined,
+          undefined,
+          tok(5),
+        ),
+      },
+    ];
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic"],
+    });
+
+    // A single-provider combine is just the one draft — one ledger entry.
+    expect(result.usage?.calls).toEqual([
+      { id: "anthropic", model: "anthropic-model", usage: tok(5) },
+    ]);
+  });
+
+  it("skips critiques and sanitize once the budget is spent, but still synthesizes", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const roster = ["anthropic", "openai", "gemini"].map((name) => ({
+      id: name,
+      providerName: name as "anthropic" | "openai" | "gemini",
+      provider: fakeProvider(name, calls, undefined, undefined, tok(1_000_000)),
+    }));
+
+    const result = await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
+      {
+        // 3 drafts at $1 each = $3 > $2, so critiques are skipped before launching.
+        budget: { usd: 2, models: cheapModels },
+        onEvent: (event) => events.push(event),
+      },
+    );
+
+    expect(calls.filter((c) => c.phase === "draft")).toHaveLength(3);
+    expect(calls.filter((c) => c.phase === "critique")).toHaveLength(0);
+    expect(calls.filter((c) => c.phase === "synth")).toHaveLength(1);
+    expect(calls.filter((c) => c.phase === "sanitize")).toHaveLength(0);
+    // Synthesis still produced an answer (a budget never leaves the run empty).
+    expect(result.text).toBe("anthropic:synth");
+
+    const skipped = events.flatMap((e) =>
+      e.type === "budget" && e.skipped !== undefined ? [e.skipped] : [],
+    );
+    expect(skipped).toEqual(["critiques", "sanitize"]);
+  });
+
+  it("runs every phase when the budget is generous", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const roster = ["anthropic", "openai"].map((name) => ({
+      id: name,
+      providerName: name as "anthropic" | "openai",
+      provider: fakeProvider(name, calls, undefined, undefined, tok(1_000_000)),
+    }));
+
+    await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai"] },
+      {
+        budget: { usd: 1000, models: cheapModels },
+        onEvent: (event) => events.push(event),
+      },
+    );
+
+    expect(calls.filter((c) => c.phase === "critique")).toHaveLength(2);
+    expect(calls.filter((c) => c.phase === "sanitize")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "budget")).toHaveLength(0);
+  });
+
+  it("warns once and enforces nothing when no call can be priced", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const roster = ["anthropic", "openai"].map((name) => ({
+      id: name,
+      providerName: name as "anthropic" | "openai",
+      provider: fakeProvider(name, calls, undefined, undefined, tok(1_000_000)),
+    }));
+
+    await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai"] },
+      // No `models`, so the fake `<name>-model`s can't be priced → budget is inert.
+      { budget: { usd: 0.000_001 }, onEvent: (event) => events.push(event) },
+    );
+
+    // The budget couldn't enforce, so every phase ran.
+    expect(calls.filter((c) => c.phase === "critique")).toHaveLength(2);
+    expect(calls.filter((c) => c.phase === "sanitize")).toHaveLength(1);
+    // Exactly one under-enforced warning, and no skip events.
+    const budgetEvents = events.flatMap((e) =>
+      e.type === "budget" ? [e] : [],
+    );
+    expect(budgetEvents).toHaveLength(1);
+    expect(budgetEvents[0]?.underEnforced).toBe(true);
+    expect(budgetEvents[0]?.skipped).toBeUndefined();
   });
 });

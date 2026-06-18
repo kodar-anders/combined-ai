@@ -218,7 +218,7 @@ export class ProviderRegistry {
     this.#rejectResponseFormat(request, "consensus");
     this.#validateConsensusOptions(request, ids);
     const synthesizer = request.synthesizer ?? firstId;
-    return runConsensus(roster, synthesizer, request, options?.onEvent);
+    return runConsensus(roster, synthesizer, request, options);
   }
 
   /**
@@ -231,7 +231,7 @@ export class ProviderRegistry {
   ): Promise<PipelineResult> {
     const { roster } = this.#prepare(request);
     this.#rejectResponseFormat(request, "pipeline");
-    return runPipeline(roster, request, options?.onEvent);
+    return runPipeline(roster, request, options);
   }
 
   /**
@@ -261,7 +261,7 @@ export class ProviderRegistry {
         `The "ensemble" strategy requires an object schema (its field-wise vote needs named fields); got a "${rootType}" schema.`,
       );
     }
-    return runEnsemble(roster, request, options?.onEvent);
+    return runEnsemble(roster, request, options);
   }
 
   /**
@@ -274,7 +274,7 @@ export class ProviderRegistry {
   ): Promise<BroadcastResult> {
     const { roster } = this.#prepare(request);
     this.#rejectResponseFormat(request, "broadcast");
-    return runBroadcast(roster, request, options?.onEvent);
+    return runBroadcast(roster, request, options);
   }
 
   /**

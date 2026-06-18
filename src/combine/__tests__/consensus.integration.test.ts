@@ -60,11 +60,13 @@ describeLive("ProviderRegistry.combine consensus (live)", () => {
           onEvent: (event) => {
             events.push(event);
             // Print progress as the live run unfolds.
-            console.log(
-              event.type === "phase"
-                ? `→ ${event.phase}`
-                : `  ${event.type} ${event.provider}: ${event.status}`,
-            );
+            if (event.type === "phase") {
+              console.log(`→ ${event.phase}`);
+            } else if (event.type === "budget") {
+              console.log(`  budget: spent ${String(event.spentUsd)}`);
+            } else {
+              console.log(`  ${event.type} ${event.provider}: ${event.status}`);
+            }
           },
         },
       );

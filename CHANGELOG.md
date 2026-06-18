@@ -9,6 +9,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **Combine cost aggregation + budget caps** (`src/combine/cost.ts`, `src/combine`):
+  `combineCost(result, options?)` prices a finished combine in USD, summing each model
+  call **individually** from a new per-call ledger so tiered rates and thinking
+  residuals stay correct (never the lossy summed `byParticipant`). `CombineUsage` gains
+  a `calls: CallUsage[]` ledger (each call tagged with its `model`). A `CombineOptions.budget`
+  (`{ usd, ...CostOptions }`) tracks running cost and skips _optional_ phases once exceeded
+  — consensus critiques/sanitize, pipeline refiners/sanitize — while required phases always
+  run, so a run never ends empty (a soft floor on optional work, not a hard cap). A `budget`
+  progress event reports skips and warns once (`underEnforced`) when a call can't be priced.
+  Budget on the `ensemble`/`broadcast` fan-outs is accepted but informational (a single
+  parallel burst can't be pre-empted).
+
 - **Cost & pricing layer** (`src/cost.ts`, `src/models.ts`): `costOf(result)` and
   `costOfUsage(usage, model)` turn token usage into a `CostBreakdown` in USD, using
   a tiny built-in pricing registry. `findModel`/`listModels` expose the registry
