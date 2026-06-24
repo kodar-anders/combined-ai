@@ -3,10 +3,13 @@ import { describe, expect, it } from "@jest/globals";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type Provider,
   type Usage,
 } from "../../types";
 import { consensus } from "../consensus";
+import { type ResolvedEmbedder } from "../embedding";
 import { type CombineEvent } from "../index";
 
 type Phase = "draft" | "critique" | "synth" | "sanitize";
@@ -71,6 +74,32 @@ function fakeProvider(
 const PROMPT: CompletionRequest = {
   messages: [{ role: "user", content: "What is 2 + 2?" }],
 };
+
+// Maps a draft text to a 2-D vector: the anthropic/openai drafts agree, gemini
+// dissents. Used to exercise the optional draftAgreement signal.
+const DRAFT_VECTORS: Record<string, number[]> = {
+  "anthropic:draft": [1, 0],
+  "openai:draft": [1, 0],
+  "gemini:draft": [0, 1],
+};
+
+function fakeEmbedder(): ResolvedEmbedder {
+  const provider: Provider & { embed: NonNullable<Provider["embed"]> } = {
+    name: "emb",
+    complete: () => {
+      throw new Error("complete not used in this test");
+    },
+    stream: () => {
+      throw new Error("stream not used in this test");
+    },
+    embed: (request: EmbeddingRequest): Promise<EmbeddingResult> =>
+      Promise.resolve({
+        embeddings: request.input.map((text) => DRAFT_VECTORS[text] ?? [0, 0]),
+        model: "embed-model",
+      }),
+  };
+  return { name: "emb", provider };
+}
 
 describe("consensus", () => {
   it("runs draft → critique → synthesis across all participants", async () => {
@@ -1124,5 +1153,47 @@ describe("consensus cost ledger + budget", () => {
     expect(budgetEvents).toHaveLength(1);
     expect(budgetEvents[0]?.underEnforced).toBe(true);
     expect(budgetEvents[0]?.skipped).toBeUndefined();
+  });
+
+  it("attaches an informational draftAgreement when an embedder is given", async () => {
+    const calls: Call[] = [];
+    const roster = (["anthropic", "openai", "gemini"] as const).map((name) => ({
+      id: name,
+      providerName: name,
+      provider: fakeProvider(name, calls),
+    }));
+
+    const result = await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
+      undefined,
+      fakeEmbedder(),
+    );
+
+    // The synthesized answer is unchanged by the signal.
+    expect(result.text).toBe("anthropic:synth");
+    expect(result.draftAgreement?.agreement).toBeCloseTo(1 / 3);
+    expect(result.draftAgreement?.outlier).toBe("gemini");
+    expect(result.draftAgreement?.clusters).toEqual([
+      ["anthropic", "openai"],
+      ["gemini"],
+    ]);
+  });
+
+  it("omits draftAgreement when no embedder is configured", async () => {
+    const calls: Call[] = [];
+    const roster = (["anthropic", "openai"] as const).map((name) => ({
+      id: name,
+      providerName: name,
+      provider: fakeProvider(name, calls),
+    }));
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    expect(result.draftAgreement).toBeUndefined();
   });
 });

@@ -4,9 +4,12 @@ import { type ProviderName } from "../../registry";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type Provider,
 } from "../../types";
 import { ensemble } from "../ensemble";
+import { type ResolvedEmbedder } from "../embedding";
 import { type CombineEvent, type CombineRequest } from "../index";
 
 type Call = { provider: string; request: CompletionRequest };
@@ -292,5 +295,81 @@ describe("ensemble", () => {
     // vote merged as usual.
     expect(result.responses).toHaveLength(2);
     expect(result.merged.city).toBe("Paris");
+  });
+
+  it("adds per-field semanticAgreement for string fields without changing the merge", async () => {
+    // Three paraphrases of the same city → identical vectors (semantic ~1),
+    // though they are three distinct strings (exact-match agreement 1/3).
+    const cityVectors: Record<string, number[]> = {
+      Paris: [1, 0],
+      "Paris, France": [1, 0],
+      "The city of Paris": [1, 0],
+    };
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        embed: (req: EmbeddingRequest): Promise<EmbeddingResult> =>
+          Promise.resolve({
+            embeddings: req.input.map((t) => cityVectors[t] ?? [0, 0]),
+            model: "embed-model",
+          }),
+      },
+    };
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, {
+          parsed: { city: "Paris, France", pop: 5 },
+        }),
+      ),
+      entry(
+        "gemini",
+        fakeProvider("gemini", calls, {
+          parsed: { city: "The city of Paris", pop: 5 },
+        }),
+      ),
+    ];
+
+    const result = await ensemble(roster, request(), undefined, embedder);
+
+    // The merge is still the deterministic exact-match vote (first-seen value).
+    expect(result.merged.city).toBe("Paris");
+    // Semantic agreement sees the paraphrases as the same (~1); the numeric `pop`
+    // field is excluded (string fields only).
+    expect(result.semanticAgreement?.city).toBeCloseTo(1);
+    expect(result.semanticAgreement?.pop).toBeUndefined();
+  });
+
+  it("omits semanticAgreement when no embedder is configured", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, { parsed: { city: "Lyon", pop: 5 } }),
+      ),
+    ];
+
+    const result = await ensemble(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+    );
+
+    expect(result.semanticAgreement).toBeUndefined();
   });
 });

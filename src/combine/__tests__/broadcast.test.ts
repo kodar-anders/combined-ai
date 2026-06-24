@@ -4,10 +4,13 @@ import { type ProviderName } from "../../registry";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type Provider,
   type Usage,
 } from "../../types";
 import { broadcast } from "../broadcast";
+import { type ResolvedEmbedder } from "../embedding";
 import { type CombineEvent, type CombineRequest } from "../index";
 
 type Call = { provider: string; request: CompletionRequest };
@@ -269,5 +272,123 @@ describe("broadcast", () => {
     // fan-out strategies have no phase to gate, so the budget stays inert).
     expect(result.responses).toHaveLength(2);
     expect(events.some((e) => e.type === "budget")).toBe(false);
+  });
+});
+
+// 2-D vectors so the cosine relationships are obvious: "A"/"B" identical, "C"
+// orthogonal to both.
+const EMBED_VECTORS: Record<string, number[]> = {
+  A: [1, 0],
+  B: [1, 0],
+  C: [0, 1],
+};
+
+function fakeEmbedder(opts?: {
+  usage?: Usage;
+  fail?: boolean;
+}): ResolvedEmbedder {
+  const provider: Provider & { embed: NonNullable<Provider["embed"]> } = {
+    name: "emb",
+    complete: () => {
+      throw new Error("complete not used in this test");
+    },
+    stream: () => {
+      throw new Error("stream not used in this test");
+    },
+    embed: (req: EmbeddingRequest): Promise<EmbeddingResult> => {
+      if (opts?.fail === true) {
+        return Promise.reject(new Error("embed failed"));
+      }
+      return Promise.resolve({
+        embeddings: req.input.map((text) => EMBED_VECTORS[text] ?? [0, 0]),
+        model: "embed-model",
+        usage: opts?.usage,
+      });
+    },
+  };
+  return { name: "emb", provider };
+}
+
+describe("broadcast semantic comparison", () => {
+  it("attaches agreement, outlier, and clusters when an embedder is given", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry("anthropic", fakeProvider("anthropic", calls, { text: "A" })),
+      entry("openai", fakeProvider("openai", calls, { text: "B" })),
+      entry("google", fakeProvider("google", calls, { text: "C" })),
+    ];
+
+    const result = await broadcast(
+      roster,
+      request(),
+      undefined,
+      fakeEmbedder({
+        usage: { inputTokens: 9, outputTokens: 0, totalTokens: 9 },
+      }),
+    );
+
+    expect(result.semantic?.agreement).toBeCloseTo(1 / 3);
+    expect(result.semantic?.outlier).toBe("google");
+    expect(result.semantic?.clusters).toEqual([
+      ["anthropic", "openai"],
+      ["google"],
+    ]);
+    // The embedding call's usage is folded into the ledger under a distinct
+    // `embedding:<provider>` id (not a participant id).
+    expect(result.usage?.byParticipant["embedding:emb"]).toEqual({
+      inputTokens: 9,
+      outputTokens: 0,
+      totalTokens: 9,
+    });
+  });
+
+  it("omits the comparison when only one non-empty answer is returned", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry("anthropic", fakeProvider("anthropic", calls, { text: "A" })),
+      entry("openai", fakeProvider("openai", calls, { text: "" })),
+    ];
+
+    const result = await broadcast(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      undefined,
+      fakeEmbedder(),
+    );
+
+    expect(result.semantic).toBeUndefined();
+  });
+
+  it("does not fail the broadcast when the embedding pass throws", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry("anthropic", fakeProvider("anthropic", calls, { text: "A" })),
+      entry("openai", fakeProvider("openai", calls, { text: "B" })),
+    ];
+
+    const result = await broadcast(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      undefined,
+      fakeEmbedder({ fail: true }),
+    );
+
+    expect(result.responses).toHaveLength(2);
+    expect(result.semantic).toBeUndefined();
+  });
+
+  it("produces no semantic field when no embedder is configured", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry("anthropic", fakeProvider("anthropic", calls, { text: "A" })),
+      entry("openai", fakeProvider("openai", calls, { text: "B" })),
+    ];
+
+    const result = await broadcast(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+    );
+
+    expect(result.semantic).toBeUndefined();
   });
 });

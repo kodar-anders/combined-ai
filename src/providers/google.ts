@@ -12,6 +12,8 @@ import {
   type CompletionRequest,
   type CompletionResult,
   type ContentPart,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type FinishReason,
   type MediaSource,
   type Message,
@@ -32,6 +34,7 @@ export type GoogleProviderOptions = {
 };
 
 const DEFAULT_MODEL = "gemini-2.5-pro";
+const DEFAULT_EMBED_MODEL = "gemini-embedding-001";
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
 /** Non-streaming default keeps responses under the HTTP timeout window. */
@@ -132,6 +135,37 @@ export class GoogleProvider implements Provider {
         yield text;
       }
     }
+  }
+
+  async embed(request: EmbeddingRequest): Promise<EmbeddingResult> {
+    const model = request.model ?? DEFAULT_EMBED_MODEL;
+    // Use :batchEmbedContents for every call (a single input is a batch of one),
+    // keeping one code path. Each request entry repeats the model as a
+    // `models/<id>` resource path, as the batch API requires.
+    const response = await requestWithRetry(
+      "google",
+      `${this.#baseUrl}/v1beta/models/${model}:batchEmbedContents`,
+      {
+        method: "POST",
+        headers: this.#headers(),
+        body: JSON.stringify(toBatchEmbedBody(request, model)),
+        signal: request.signal,
+      },
+      this.#retry,
+    );
+
+    if (!response.ok) {
+      throw await apiError("google", response);
+    }
+
+    const data: unknown = await response.json();
+    if (isRecord(data) && isRecord(data.error)) {
+      throw apiErrorFromBody("google", response.status, data);
+    }
+    // Gemini's batch-embed response carries neither a model field nor a usage
+    // block, so report the requested model and leave `usage` undefined (the cost
+    // layer then declines gracefully rather than billing a fabricated count).
+    return { embeddings: extractEmbeddings(data), model };
   }
 
   /**
@@ -344,6 +378,35 @@ function toGeminiMedia(source: MediaSource): GeminiPart {
         ? { fileUri: source.url }
         : { mimeType: source.mediaType, fileUri: source.url },
   };
+}
+
+/** Build the `:batchEmbedContents` body — one request entry per input text. */
+function toBatchEmbedBody(
+  request: EmbeddingRequest,
+  model: string,
+): Record<string, unknown> {
+  return {
+    requests: request.input.map((text) => {
+      const entry: Record<string, unknown> = {
+        model: `models/${model}`,
+        content: { parts: [{ text }] },
+      };
+      if (request.dimensions !== undefined) {
+        entry.outputDimensionality = request.dimensions;
+      }
+      return entry;
+    }),
+  };
+}
+
+/** Map `embeddings[].values` to one vector per input, in request order. */
+function extractEmbeddings(data: unknown): number[][] {
+  const rows = isRecord(data) ? toArray(data.embeddings) : [];
+  return rows.map((row) =>
+    isRecord(row) && Array.isArray(row.values)
+      ? row.values.filter((n): n is number => typeof n === "number")
+      : [],
+  );
 }
 
 function toArray(value: unknown): unknown[] {

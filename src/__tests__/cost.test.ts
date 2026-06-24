@@ -99,6 +99,18 @@ describe("costOfUsage", () => {
     expect(costOfUsage(usage(100, 100), "mystery-model")).toBeUndefined();
   });
 
+  it("prices an embedding model on input only (output rate is 0)", () => {
+    // text-embedding-3-small: $0.02/MTok input, $0/MTok output. An embedding
+    // usage carries outputTokens:0 and totalTokens===inputTokens, so the whole
+    // cost is the input.
+    expect(costOfUsage(usage(1_000_000, 0), "text-embedding-3-small")).toEqual({
+      model: "text-embedding-3-small",
+      inputCost: 0.02,
+      outputCost: 0,
+      totalCost: 0.02,
+    });
+  });
+
   it("prices via an override table", () => {
     const breakdown = costOfUsage(usage(1_000_000, 1_000_000), "local", {
       models: { local: { inputPerMTok: 10, outputPerMTok: 20 } },

@@ -11,6 +11,8 @@ import { requestWithRetry, type RetryOptions } from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type FilePart,
   type FinishReason,
   type ImagePart,
@@ -40,6 +42,7 @@ export type OpenAIProviderOptions = {
 };
 
 const DEFAULT_MODEL = "gpt-4.1";
+const DEFAULT_EMBED_MODEL = "text-embedding-3-small";
 const DEFAULT_BASE_URL = "https://api.openai.com";
 
 /** Non-streaming default keeps responses under the HTTP timeout window. */
@@ -150,6 +153,44 @@ export class OpenAIProvider implements Provider {
         yield delta.content;
       }
     }
+  }
+
+  async embed(request: EmbeddingRequest): Promise<EmbeddingResult> {
+    const model = request.model ?? DEFAULT_EMBED_MODEL;
+    // `encoding_format` defaults to "float" (a JSON number array), which is what
+    // we want; no need to send it. `input` accepts the array directly.
+    const body: Record<string, unknown> = { model, input: request.input };
+    if (request.dimensions !== undefined) {
+      body.dimensions = request.dimensions;
+    }
+    const response = await requestWithRetry(
+      this.name,
+      `${this.#baseUrl}/v1/embeddings`,
+      {
+        method: "POST",
+        headers: this.#headers(),
+        body: JSON.stringify(body),
+        signal: request.signal,
+      },
+      this.#retry,
+    );
+
+    if (!response.ok) {
+      throw await apiError(this.name, response);
+    }
+
+    const data: unknown = await response.json();
+    if (isRecord(data) && isRecord(data.error)) {
+      throw apiErrorFromBody(this.name, response.status, data);
+    }
+    return {
+      embeddings: extractEmbeddings(data),
+      model: extractModel(data, model),
+      // An embeddings response carries only prompt tokens, so the shared
+      // completion usage parser yields `outputTokens: 0` for it (and the
+      // embedding models price output at $0 anyway).
+      usage: extractUsage(data),
+    };
   }
 
   #headers(): Record<string, string> {
@@ -454,4 +495,29 @@ function extractRefusal(data: unknown): string | undefined {
     return message.refusal;
   }
   return undefined;
+}
+
+function toNumberArray(value: unknown): number[] {
+  return Array.isArray(value)
+    ? value.filter((n): n is number => typeof n === "number")
+    : [];
+}
+
+/**
+ * Map `data[]` to one vector per input, **sorted by `index`** — the API returns
+ * them in input order, but sorting defensively guarantees the caller's ordering.
+ */
+function extractEmbeddings(data: unknown): number[][] {
+  const rows = isRecord(data) ? toArray(data.data) : [];
+  return (
+    rows
+      .filter(isRecord)
+      .map((row) => ({
+        index: typeof row.index === "number" ? row.index : 0,
+        embedding: toNumberArray(row.embedding),
+      }))
+      // eslint-disable-next-line unicorn/no-array-sort -- toSorted() needs ES2023; the lib target is ES2022. The array is freshly mapped, so mutating sort is safe.
+      .sort((a, b) => a.index - b.index)
+      .map((row) => row.embedding)
+  );
 }

@@ -10,6 +10,9 @@ export type {
   CompletionRequest,
   CompletionResult,
   ContentPart,
+  EmbeddingOptions,
+  EmbeddingRequest,
+  EmbeddingResult,
   FilePart,
   FinishReason,
   ImagePart,
@@ -26,6 +29,8 @@ export type {
   ToolUsePart,
   Usage,
 } from "./types";
+
+export { cosineSimilarity } from "./embeddings";
 
 export { ProviderError, type ProviderErrorKind } from "./errors";
 export { type RetryOptions } from "./transport";
@@ -60,6 +65,7 @@ export type {
   BroadcastResult,
   CallUsage,
   CombineBudget,
+  CombineEmbedding,
   CombineEvent,
   CombineOptions,
   CombineRequest,
@@ -76,6 +82,7 @@ export type {
   PipelineRequest,
   PipelineResult,
   ResultFor,
+  SemanticComparison,
   StrategyName,
   StrategyRequest,
 } from "./combine";

@@ -122,7 +122,14 @@ describe("listModels", () => {
     expect(models.length).toBeGreaterThan(0);
     const ids = models.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const m of models) {
+    // Embedding models bill input only (outputPerMTok: 0); every other model must
+    // charge for output — a 0 there would silently under-bill output tokens, so
+    // keep that guard scoped to non-embedding models rather than relaxing it for all.
+    for (const m of models.filter((x) => x.id.includes("embedding"))) {
+      expect(m.pricing.inputPerMTok).toBeGreaterThan(0);
+      expect(m.pricing.outputPerMTok).toBe(0);
+    }
+    for (const m of models.filter((x) => !x.id.includes("embedding"))) {
       expect(m.pricing.inputPerMTok).toBeGreaterThan(0);
       expect(m.pricing.outputPerMTok).toBeGreaterThan(0);
     }

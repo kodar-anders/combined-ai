@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "@jest/globals";
 
+import { cosineSimilarity } from "../../embeddings";
 import { GoogleProvider } from "../google";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -91,6 +92,28 @@ describeLive("GoogleProvider (live)", () => {
       expect(result.finishReason).toBe("tool_use");
       expect(result.toolCalls?.[0]?.name).toBe("get_weather");
       console.log("Tool call:", JSON.stringify(result.toolCalls));
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "embeds text, and related text is more similar than unrelated",
+    async () => {
+      const result = await provider.embed({
+        input: ["a dog barks", "a puppy yaps", "the stock market fell"],
+        model: "gemini-embedding-001",
+      });
+
+      expect(result.embeddings).toHaveLength(3);
+      expect(result.embeddings[0]?.length).toBeGreaterThan(0);
+
+      const [dog, puppy, market] = result.embeddings;
+      if (!dog || !puppy || !market) {
+        throw new Error("expected three embeddings");
+      }
+      expect(cosineSimilarity(dog, puppy)).toBeGreaterThan(
+        cosineSimilarity(dog, market),
+      );
     },
     TIMEOUT_MS,
   );

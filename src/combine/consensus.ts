@@ -14,6 +14,7 @@ import {
   type ConsensusResult,
   type ParticipantOutcome,
 } from "./index";
+import { compareAnswers, type ResolvedEmbedder } from "./embedding";
 import {
   aggregateUsage,
   composeSystem,
@@ -90,6 +91,7 @@ export async function consensus(
   synthesizer: string,
   request: CombineRequest,
   options?: CombineOptions,
+  embedder?: ResolvedEmbedder,
 ): Promise<ConsensusResult> {
   const anonymized = (request.attribution ?? "anonymized") === "anonymized";
   const minParticipants = request.minParticipants ?? 2;
@@ -156,6 +158,23 @@ export async function consensus(
       drafts,
     );
   }
+
+  // Optional, informational: embed the surviving drafts to score their semantic
+  // agreement (and flag the outlier). Kicked off here so it overlaps the critique
+  // + synthesis phases; awaited only when building the result. It never feeds
+  // synthesis, and a failure resolves to undefined so it can't break the run. It
+  // is intentionally *not* budget-gated: embeddings are far cheaper than the LLM
+  // phases the soft budget governs, and skipping this informational call would
+  // save little while complicating the gate.
+  const draftAgreementPromise =
+    embedder === undefined
+      ? undefined
+      : compareAnswers(
+          embedder,
+          survivors.map((s) => ({ id: s.id, text: s.result.text })),
+          request.signal,
+          // eslint-disable-next-line unicorn/no-useless-undefined -- a rejected comparison resolves to `undefined` (informational, must not break the run).
+        ).catch(() => undefined);
 
   // ── Phase 2: critiques (parallel fan-out over survivors) ──
   // Critiques are an optional refinement: if the budget is already spent, skip the
@@ -251,6 +270,8 @@ export async function consensus(
         });
         finalText = sanitized.text;
       }
+      // Settle the (concurrent) draft-agreement embedding before returning.
+      const draftAgr = await draftAgreementPromise;
       return {
         text: finalText,
         strategy: "consensus",
@@ -258,10 +279,12 @@ export async function consensus(
         model: result.model,
         drafts,
         critiques,
+        ...(draftAgr ? { draftAgreement: draftAgr.comparison } : {}),
         usage: aggregateUsage([
           ...outcomeUsage(drafts),
           ...outcomeUsage(critiques),
           ...synthUsage,
+          ...(draftAgr ? [draftAgr.usage] : []),
         ]),
       };
     } catch (error) {

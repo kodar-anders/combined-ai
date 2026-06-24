@@ -199,6 +199,15 @@ export type ConsensusResult = {
   drafts: ParticipantOutcome[];
   /** Phase 2 critiques, in surviving-participant order (includes any failures). */
   critiques: ParticipantOutcome[];
+  /**
+   * A {@link SemanticComparison} of the surviving drafts — present only when
+   * {@link CombineOptions.embedding} was set and at least two drafts survived.
+   * **Informational; it does not influence synthesis.** Whole-draft cosine
+   * reflects topical overlap as much as agreement on the conclusion, so read
+   * `agreement` as a soft signal — the `outlier` (the most divergent drafter) is
+   * the more actionable half.
+   */
+  draftAgreement?: SemanticComparison;
   /** Aggregated token usage across every call, or `undefined` if none was reported. */
   usage?: CombineUsage;
 };
@@ -248,10 +257,48 @@ export type EnsembleResult = {
   merged: Record<string, unknown>;
   /** How strongly the participants agreed, overall and per field. */
   agreement: EnsembleAgreement;
+  /**
+   * Per-field **semantic** agreement (mean pairwise cosine, in `[-1, 1]` —
+   * typically 0–1 for text) over the string-valued fields — present only when
+   * {@link CombineOptions.embedding} was set. For each such field, the mean
+   * pairwise cosine similarity of the participants' values, so
+   * paraphrases ("Paris" vs "the city of Paris") score high while genuinely
+   * different answers score low — the meaning-aware companion to the exact-match
+   * `agreement` above. **Purely informational:** the `merged` value is still the
+   * deterministic exact-match vote, never chosen by similarity.
+   */
+  semanticAgreement?: Record<string, number>;
   /** Each participant's structured response, in participant order (includes failures). */
   responses: ParticipantOutcome[];
   /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
   usage?: CombineUsage;
+};
+
+/**
+ * A semantic comparison of several participants' answers, computed by embedding
+ * them with one designated model (see {@link CombineEmbedding}) and comparing the
+ * vectors. **Informational only** — it ranks and scores the answers; it never
+ * changes a returned or merged value.
+ */
+export type SemanticComparison = {
+  /**
+   * Overall agreement: the mean pairwise cosine similarity across the compared
+   * answers, in `[-1, 1]` (higher = the models converged more). `1` when fewer
+   * than two answers were compared.
+   */
+  agreement: number;
+  /**
+   * The participant id whose answer is farthest from the group centroid — the
+   * dissenter. Set only when **three or more** answers were compared (with two,
+   * both are equidistant, so there is no meaningful outlier).
+   */
+  outlier?: string;
+  /**
+   * Groups of participant ids whose answers are mutually similar (cosine at or
+   * above the internal clustering threshold), in participant order. A heuristic
+   * grouping — read it as "these models said roughly the same thing".
+   */
+  clusters: string[][];
 };
 
 /**
@@ -264,6 +311,12 @@ export type BroadcastResult = {
   strategy: "broadcast";
   /** Each participant's raw completion, in participant order (includes failures). */
   responses: ParticipantOutcome[];
+  /**
+   * A {@link SemanticComparison} of the participants' answers — present only when
+   * {@link CombineOptions.embedding} was set and at least two non-empty answers
+   * came back. Informational: every raw response is still returned unchanged.
+   */
+  semantic?: SemanticComparison;
   /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
   usage?: CombineUsage;
 };
@@ -385,6 +438,22 @@ export type CombineEvent =
  */
 export type CombineBudget = { usd: number } & CostOptions;
 
+/**
+ * Embed participant answers with a **single** designated model to compute a
+ * {@link SemanticComparison}. Cross-provider vectors live in different spaces and
+ * aren't comparable, so all answers are embedded with this one provider+model.
+ *
+ * Used by `broadcast` today (attached as {@link BroadcastResult.semantic}); the
+ * other strategies accept it but don't act on it yet. The comparison is purely
+ * informational — it never changes a returned or merged value.
+ */
+export type CombineEmbedding = {
+  /** A configured provider that supports embeddings (its `embed` method). */
+  provider: ProviderName;
+  /** The embedding model (defaults to that provider's default embedding model). */
+  model?: string;
+};
+
 export type CombineOptions = {
   /**
    * Called with progress events as the combine runs. Errors thrown from the
@@ -396,4 +465,9 @@ export type CombineOptions = {
    * on optional work, not a hard cap on total spend.
    */
   budget?: CombineBudget;
+  /**
+   * Embed participant answers to compute a semantic comparison (see
+   * {@link CombineEmbedding}). Informational; used by `broadcast` today.
+   */
+  embedding?: CombineEmbedding;
 };

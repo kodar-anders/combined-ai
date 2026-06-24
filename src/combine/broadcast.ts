@@ -17,7 +17,9 @@ import {
   type BroadcastResult,
   type CombineOptions,
   type CombineRequest,
+  type SemanticComparison,
 } from "./index";
+import { compareAnswers, type ResolvedEmbedder } from "./embedding";
 import {
   aggregateUsage,
   makeEmitter,
@@ -36,6 +38,7 @@ export async function broadcast(
   roster: RosterEntry[],
   request: CombineRequest,
   options?: CombineOptions,
+  embedder?: ResolvedEmbedder,
 ): Promise<BroadcastResult> {
   const emit = makeEmitter(options?.onEvent);
   // `options.budget` is accepted for a uniform API but inert here: a single
@@ -56,9 +59,33 @@ export async function broadcast(
     );
   }
 
+  // Optional semantic comparison: embed the non-empty answers with the
+  // designated model and attach an agreement/outlier signal. Informational —
+  // the raw responses are returned unchanged regardless. A failed embedding
+  // pass must not fail a broadcast that already has answers, so swallow errors.
+  const usageEntries = outcomeUsage(responses);
+  let semantic: SemanticComparison | undefined;
+  if (embedder !== undefined) {
+    const answers = responses.flatMap((o) =>
+      o.status === "ok" && o.result.text.trim() !== ""
+        ? [{ id: o.id, text: o.result.text }]
+        : [],
+    );
+    try {
+      const compared = await compareAnswers(embedder, answers, request.signal);
+      if (compared !== undefined) {
+        semantic = compared.comparison;
+        usageEntries.push(compared.usage);
+      }
+    } catch {
+      // Comparison is best-effort; keep the answers we already have.
+    }
+  }
+
   return {
     strategy: "broadcast",
     responses,
-    usage: aggregateUsage(outcomeUsage(responses)),
+    ...(semantic === undefined ? {} : { semantic }),
+    usage: aggregateUsage(usageEntries),
   };
 }

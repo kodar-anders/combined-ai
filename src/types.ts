@@ -247,10 +247,61 @@ export type CompletionResult = {
   toolCalls?: ToolCall[];
 };
 
+/**
+ * A request to embed one or more texts into vectors. Always a batch on the wire
+ * — {@link ProviderRegistry.embed} is sugar for a single text. `model` and
+ * `dimensions` are optional; `signal` aborts the request like
+ * {@link CompletionRequest.signal}.
+ */
+export type EmbeddingRequest = {
+  /** The texts to embed. One vector is returned per entry, in the same order. */
+  input: string[];
+  /** Override the provider's default embedding model. */
+  model?: string;
+  /**
+   * Reduce the output vector's dimensionality (OpenAI `dimensions` / Gemini
+   * `outputDimensionality`). Omit for the model's native size. Compare vectors
+   * only when they were produced with the same model and dimension.
+   */
+  dimensions?: number;
+  /** Abort the request when this signal fires (see {@link CompletionRequest.signal}). */
+  signal?: AbortSignal;
+};
+
+/** The {@link EmbeddingRequest} options minus the `input` texts. */
+export type EmbeddingOptions = Omit<EmbeddingRequest, "input">;
+
+/**
+ * The result of an embedding call: one vector per input (in input order), the
+ * model that produced them, and token usage when the provider reports it.
+ */
+export type EmbeddingResult = {
+  /** One embedding vector per input, in input order. */
+  embeddings: number[][];
+  /** The model that actually produced the embeddings. */
+  model: string;
+  /**
+   * Token usage, when the provider reports it. Reuses {@link Usage} with
+   * `outputTokens: 0` and `totalTokens === inputTokens` (embeddings have no
+   * completion tokens), so embedding calls price and aggregate through the same
+   * machinery as completions. `undefined` when the provider returns none (e.g.
+   * Gemini's embedding endpoint reports no usage).
+   */
+  usage?: Usage;
+};
+
 export type Provider = {
   readonly name: string;
   /** Run a single completion and return the full text. */
   complete(request: CompletionRequest): Promise<CompletionResult>;
   /** Run a single completion, yielding text deltas as they arrive. */
   stream(request: CompletionRequest): AsyncIterable<string>;
+  /**
+   * Embed one or more texts into vectors. **Optional** — not every provider has
+   * an embeddings endpoint (Anthropic does not; it directs users to a dedicated
+   * embeddings provider), so this is absent on providers that don't support it.
+   * Reach it via {@link ProviderRegistry.embed}/`embedMany`, which throw a clear
+   * error when the selected provider doesn't implement it.
+   */
+  embed?(request: EmbeddingRequest): Promise<EmbeddingResult>;
 };

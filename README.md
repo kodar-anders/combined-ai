@@ -49,6 +49,7 @@ console.log(result.text);
   - [Request options](#request-options)
   - [Result fields](#result-fields)
   - [Cost & pricing](#cost--pricing)
+  - [Embeddings](#embeddings)
   - [Structured output](#structured-output)
   - [Tool calling](#tool-calling)
   - [Multimodal input](#multimodal-input)
@@ -170,6 +171,10 @@ Behavior worth knowing:
   can check the _why_. The user-facing synthesis is unconstrained.
 - **A single participant** with a successful draft degrades to a plain completion
   (no critique/synthesis); if that lone draft fails or is empty, the run throws.
+- **Optional draft agreement.** Pass an `embedding` option (see
+  [Broadcast](#broadcast)) to attach `result.draftAgreement` — a semantic
+  comparison of the surviving drafts (an `agreement` score plus the `outlier`
+  drafter). Informational only; it does not affect the synthesized answer.
 
 ### Pipeline
 
@@ -243,6 +248,12 @@ Notes:
   named fields).
 - **The merge is shallow** — nested objects/arrays are voted on as whole values.
   Keep schemas to flat fields for the most useful per-field agreement.
+- **Optional semantic agreement.** With an `embedding` option (see
+  [Broadcast](#broadcast)), `result.semanticAgreement` adds a per-field
+  meaning-aware score over the **string** fields, so paraphrases ("Paris" vs "the
+  city of Paris") count as agreement where the exact-match vote wouldn't. The
+  `merged` value is still the deterministic exact-match vote — embeddings never
+  pick it.
 
 ### Broadcast
 
@@ -277,6 +288,31 @@ for (const response of result.responses) {
 - **No structured output:** `responseFormat` is rejected (it's the
   [ensemble](#ensemble) strategy's job); `synthesizer`, `attribution`, and
   `minParticipants` are consensus-specific and ignored.
+
+**Semantic comparison (optional).** Pass an `embedding` option to embed every
+answer with one designated model and get a `result.semantic` alongside the raw
+responses — informational, the responses are unchanged:
+
+```ts
+const result = await registry.combine(
+  {
+    messages: [{ role: "user", content: "Name a good book on databases." }],
+    participants: ["anthropic", "openai", "google"],
+    strategy: "broadcast",
+  },
+  { embedding: { provider: "openai" } }, // one model embeds all answers
+);
+
+result.semantic?.agreement; // mean pairwise cosine — how much the models converged
+result.semantic?.outlier; // the dissenting participant id (farthest from the centroid)
+result.semantic?.clusters; // [["anthropic","openai"],["google"]] — who agreed with whom
+```
+
+The embedding provider must be configured and support embeddings (so not
+`"anthropic"`). It's used only for comparison — cross-provider vectors aren't
+comparable, so all answers go through this one model. The embedding call's usage
+is included in `result.usage`. `semantic` is omitted if fewer than two non-empty
+answers come back or the embedding call fails.
 
 ### Per-participant models
 
@@ -616,6 +652,43 @@ costOf(result, {
 
 `findModel(id)` and `listModels()` expose the registry directly.
 
+### Embeddings
+
+`registry.embed(name, text)` embeds a single string; `registry.embedMany(name, texts)`
+embeds a batch in one call (one vector per input, in order):
+
+```ts
+import { cosineSimilarity } from "combined-ai";
+
+const { embedding } = await registry.embed("openai", "a dog barks");
+const { embeddings } = await registry.embedMany("google", [
+  "a puppy yaps",
+  "the stock market fell",
+]);
+
+// Compare meaning with cosineSimilarity (always cosine — never a raw dot product):
+cosineSimilarity(embedding, embeddings[0]); // higher → closer in meaning
+```
+
+OpenAI (default `text-embedding-3-small`) and Google (default `gemini-embedding-001`)
+support embeddings. **Anthropic does not** — it has no first-party embeddings endpoint,
+so `embed("anthropic", …)` throws. Embeddings are an optional capability on the
+`Provider` contract, so a bring-your-own provider may also implement `embed`.
+
+Pass a per-call `model` or `dimensions` (reduces the output vector size — OpenAI
+`dimensions` / Gemini `outputDimensionality`):
+
+```ts
+await registry.embedMany("openai", texts, {
+  model: "text-embedding-3-large",
+  dimensions: 256,
+});
+```
+
+OpenAI reports token `usage` (priced through the same cost layer — embedding models
+are in the registry, billed on input only); Google's embedding endpoint reports none,
+so `usage` is omitted there.
+
 ### Structured output
 
 Pass `responseFormat` with a **plain JSON Schema** (no Zod, no runtime
@@ -794,8 +867,9 @@ await provider.complete({ messages, signal: AbortSignal.timeout(30_000) });
 Exported from the package entry point:
 
 - `ProviderRegistry` — the single entry point: `select()`, the strategy
-  dispatcher `combine()`, and the per-strategy methods `consensus()`,
-  `pipeline()`, `ensemble()`, `broadcast()`.
+  dispatcher `combine()`, the per-strategy methods `consensus()`,
+  `pipeline()`, `ensemble()`, `broadcast()`, and the embedding methods
+  `embed()` / `embedMany()`.
 - Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
   `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GoogleProviderOptions`,
@@ -803,20 +877,22 @@ Exported from the package entry point:
 - Contract types: `Provider`, `Message`, `Role`, `ContentPart`, `TextPart`,
   `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,
   `CompletionRequest`, `CompletionResult`, `ResponseFormat`, `ToolDefinition`,
-  `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`.
+  `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`, `EmbeddingRequest`,
+  `EmbeddingOptions`, `EmbeddingResult`.
 - Combine request types: `CombineRequest` (the dispatcher's broad type),
   `CombineRequestBase`, and the per-strategy `ConsensusRequest`,
   `PipelineRequest`, `EnsembleRequest` (`responseFormat` required),
   `BroadcastRequest`; plus `ParticipantSpec`.
 - Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
-  `EnsembleResult` | `BroadcastResult`), `EnsembleAgreement`, `CombineUsage`,
-  `CallUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
-  `CombineBudget`, `CombineEvent`, and the strategy-generic utilities
-  `StrategyRequest<S>` / `ResultFor<S>`.
+  `EnsembleResult` | `BroadcastResult`), `EnsembleAgreement`, `SemanticComparison`,
+  `CombineUsage`, `CallUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
+  `CombineBudget`, `CombineEmbedding`, `CombineEvent`, and the strategy-generic
+  utilities `StrategyRequest<S>` / `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
 - Cost & pricing: `costOf`, `costOfUsage`, `combineCost`, `findModel`, `listModels`,
   `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`, `CostOptions`,
   `ModelInfo`, `ModelPricing` (types).
+- Embeddings: `cosineSimilarity` (value).
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GoogleProvider`) are **not** exported — the registry constructs them internally.
@@ -859,7 +935,6 @@ cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 Planned, roughly in priority order (subject to change):
 
 - **Prompt caching** — surface provider-native prompt caching and cached-token usage, with cached reads priced at the discounted rate in `costOf`.
-- **Embeddings** — unified `embed` / `embedMany` (plus `cosineSimilarity`).
 - **Test utilities** — a public `MockProvider` with simulated streaming.
 - **Fallback chains** — try the next provider on failure.
 - **Per-request retry & timeout** overrides.

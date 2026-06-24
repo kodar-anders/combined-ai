@@ -29,6 +29,7 @@ import {
   type EnsembleAgreement,
   type EnsembleResult,
 } from "./index";
+import { fieldSemanticAgreement, type ResolvedEmbedder } from "./embedding";
 import {
   aggregateUsage,
   makeEmitter,
@@ -47,6 +48,7 @@ export async function ensemble(
   roster: RosterEntry[],
   request: CombineRequest,
   options?: CombineOptions,
+  embedder?: ResolvedEmbedder,
 ): Promise<EnsembleResult> {
   const emit = makeEmitter(options?.onEvent);
   // `options.budget` is accepted for a uniform API but inert here: a single
@@ -77,14 +79,62 @@ export async function ensemble(
 
   const { merged, agreement } = mergeObjects(objects);
 
+  // Optional, informational: a meaning-aware companion to the exact-match vote.
+  // For each string-valued field, embed the participants' values (one batch call)
+  // and score their mean pairwise similarity. It never changes `merged` — that
+  // stays the deterministic exact-match vote. A failure is swallowed.
+  const usageEntries = outcomeUsage(responses);
+  let semanticAgreement: Record<string, number> | undefined;
+  if (embedder !== undefined) {
+    try {
+      const scored = await fieldSemanticAgreement(
+        embedder,
+        collectStringFields(objects),
+        request.signal,
+      );
+      if (scored !== undefined) {
+        semanticAgreement = scored.agreement;
+        usageEntries.push(scored.usage);
+      }
+    } catch {
+      // Informational; keep the merge we already have.
+    }
+  }
+
   return {
     text: JSON.stringify(merged),
     strategy: "ensemble",
     merged,
     agreement,
+    ...(semanticAgreement === undefined ? {} : { semanticAgreement }),
     responses,
-    usage: aggregateUsage(outcomeUsage(responses)),
+    usage: aggregateUsage(usageEntries),
   };
+}
+
+/**
+ * Collect each field's **string** values across the valid responses, in
+ * first-seen key order. Non-string values are skipped (semantic agreement only
+ * applies to free text; enums/numbers/booleans use the exact-match vote).
+ */
+function collectStringFields(
+  objects: Array<Record<string, unknown>>,
+): Array<{ key: string; values: string[] }> {
+  const byKey = new Map<string, string[]>();
+  for (const object of objects) {
+    for (const [key, value] of Object.entries(object)) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const values = byKey.get(key);
+      if (values === undefined) {
+        byKey.set(key, [value]);
+      } else {
+        values.push(value);
+      }
+    }
+  }
+  return [...byKey].map(([key, values]) => ({ key, values }));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

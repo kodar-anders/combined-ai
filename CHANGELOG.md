@@ -7,6 +7,36 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Embedding signals in `combine`** (`src/combine/embedding.ts`): a `CombineOptions.embedding`
+  (`{ provider, model? }`) embeds participants' answers with a single designated model to add
+  **informational** signals — they never change a returned or merged value, and a failed
+  embedding pass never fails a run. The embedding call's usage folds into the result's usage
+  ledger (attributed to the embedding provider). Per strategy:
+  - **`broadcast`** → `BroadcastResult.semantic`: an overall `agreement` (mean pairwise cosine),
+    the `outlier` (dissenting participant, farthest from the centroid), and `clusters` (which
+    models said roughly the same thing).
+  - **`consensus`** → `ConsensusResult.draftAgreement`: the same `SemanticComparison` over the
+    surviving drafts (computed concurrently with critique/synthesis; does not influence the
+    synthesized answer).
+  - **`ensemble`** → `EnsembleResult.semanticAgreement`: per-field mean pairwise cosine over the
+    **string-valued** fields (all values embedded in one batched call) — a meaning-aware
+    companion to the exact-match vote, which still decides the `merged` value.
+  - **`pipeline`** is intentionally unaffected (no parallel answers to compare).
+
+- **Embeddings** (`src/embeddings.ts`, `src/providers`, `src/registry.ts`): an optional
+  `embed?()` method on the `Provider` contract, with `ProviderRegistry.embed(name, text)`
+  and `embedMany(name, texts)` as the access points (both throw a clear error when the
+  selected provider doesn't support embeddings). OpenAI (`/v1/embeddings`, default
+  `text-embedding-3-small`) and Google (`:batchEmbedContents`, default
+  `gemini-embedding-001`) implement it; **Anthropic does not** (it has no first-party
+  embeddings endpoint). `EmbeddingResult.usage` reuses `Usage` (`outputTokens: 0`) so
+  embedding calls price through the existing cost layer; embedding-model prices were added
+  to the registry (input-only, `outputPerMTok: 0`). A pure `cosineSimilarity(a, b)` helper
+  is exported for comparing vectors. An optional `dimensions` reduces the output vector
+  size (OpenAI `dimensions` / Gemini `outputDimensionality`).
+
 ## [0.2.0] - 2026-06-18
 
 ### Added

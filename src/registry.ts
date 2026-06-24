@@ -10,6 +10,7 @@
 import {
   type BroadcastRequest,
   type BroadcastResult,
+  type CombineEmbedding,
   type CombineOptions,
   type CombineRequest,
   type CombineRequestBase,
@@ -26,6 +27,7 @@ import {
   STRATEGY_NAMES,
 } from "./combine";
 import { broadcast as runBroadcast } from "./combine/broadcast";
+import { type ResolvedEmbedder } from "./combine/embedding";
 import { consensus as runConsensus } from "./combine/consensus";
 import { ensemble as runEnsemble } from "./combine/ensemble";
 import { pipeline as runPipeline } from "./combine/pipeline";
@@ -37,7 +39,12 @@ import {
 import { GoogleProvider, type GoogleProviderOptions } from "./providers/google";
 import { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
 import { type RetryOptions } from "./transport";
-import { type Provider } from "./types";
+import {
+  type EmbeddingOptions,
+  type EmbeddingResult,
+  type Provider,
+  type Usage,
+} from "./types";
 
 /**
  * An OpenAI Chat Completions–compatible endpoint registered under a custom name.
@@ -218,7 +225,8 @@ export class ProviderRegistry {
     this.#rejectResponseFormat(request, "consensus");
     this.#validateConsensusOptions(request, ids);
     const synthesizer = request.synthesizer ?? firstId;
-    return runConsensus(roster, synthesizer, request, options);
+    const embedder = this.#resolveEmbedder(options?.embedding);
+    return runConsensus(roster, synthesizer, request, options, embedder);
   }
 
   /**
@@ -261,7 +269,8 @@ export class ProviderRegistry {
         `The "ensemble" strategy requires an object schema (its field-wise vote needs named fields); got a "${rootType}" schema.`,
       );
     }
-    return runEnsemble(roster, request, options);
+    const embedder = this.#resolveEmbedder(options?.embedding);
+    return runEnsemble(roster, request, options, embedder);
   }
 
   /**
@@ -274,7 +283,42 @@ export class ProviderRegistry {
   ): Promise<BroadcastResult> {
     const { roster } = this.#prepare(request);
     this.#rejectResponseFormat(request, "broadcast");
-    return runBroadcast(roster, request, options);
+    const embedder = this.#resolveEmbedder(options?.embedding);
+    return runBroadcast(roster, request, options, embedder);
+  }
+
+  /**
+   * Embed a single text with the named provider — sugar over {@link embedMany}
+   * that returns the one vector. Throws if the provider isn't configured or
+   * doesn't support embeddings.
+   */
+  async embed(
+    name: ProviderName,
+    text: string,
+    options?: EmbeddingOptions,
+  ): Promise<{ embedding: number[]; model: string; usage?: Usage }> {
+    const result = await this.embedMany(name, [text], options);
+    const [embedding] = result.embeddings;
+    if (embedding === undefined) {
+      throw new Error(
+        `Provider "${name}" returned no embedding for the input.`,
+      );
+    }
+    return { embedding, model: result.model, usage: result.usage };
+  }
+
+  /**
+   * Embed several texts with the named provider in one call; returns one vector
+   * per input, in order. Throws if the provider isn't configured or doesn't
+   * support embeddings.
+   */
+  async embedMany(
+    name: ProviderName,
+    texts: string[],
+    options?: EmbeddingOptions,
+  ): Promise<EmbeddingResult> {
+    const provider = this.#selectEmbedder(name);
+    return provider.embed({ input: texts, ...options });
   }
 
   /**
@@ -360,6 +404,42 @@ export class ProviderRegistry {
         `Synthesizer "${request.synthesizer}" must be one of the participants: ${ids.join(", ")}`,
       );
     }
+  }
+
+  /**
+   * Select a provider that supports embeddings, or throw. Centralizes the
+   * "configured (via {@link select}) AND implements `embed`" check so both the
+   * standalone embed methods and the (future) combine embedding path share one
+   * error path.
+   */
+  #selectEmbedder(
+    name: ProviderName,
+  ): Provider & { embed: NonNullable<Provider["embed"]> } {
+    const provider = this.select(name);
+    if (provider.embed === undefined) {
+      throw new Error(`Provider "${name}" does not support embeddings.`);
+    }
+    return provider as Provider & { embed: NonNullable<Provider["embed"]> };
+  }
+
+  /**
+   * Resolve a {@link CombineEmbedding} option to a {@link ResolvedEmbedder} for the
+   * combine orchestrators (or `undefined` when no embedding was requested).
+   * Validates the provider is configured and supports `embed` up front (via
+   * {@link #selectEmbedder}), so a bad embedding provider fails before any
+   * participant call rather than after paying for the run.
+   */
+  #resolveEmbedder(
+    embedding: CombineEmbedding | undefined,
+  ): ResolvedEmbedder | undefined {
+    if (embedding === undefined) {
+      return undefined;
+    }
+    return {
+      name: embedding.provider,
+      provider: this.#selectEmbedder(embedding.provider),
+      model: embedding.model,
+    };
   }
 
   /** Whether a provider is configured under `name`. */

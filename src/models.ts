@@ -14,7 +14,7 @@
  * without waiting for a release. See {@link PRICING_VERIFIED_ON} for when these
  * numbers were last checked.
  *
- * Prices verified 2026-06-17 against:
+ * Prices verified 2026-06-24 against:
  * - Anthropic: https://platform.claude.com/docs/en/pricing
  * - OpenAI:    https://developers.openai.com/api/docs/pricing
  * - Google:    https://ai.google.dev/gemini-api/docs/pricing
@@ -61,7 +61,7 @@ export type CostOptions = {
  * The date the {@link MODELS} prices were last verified, as an ISO `YYYY-MM-DD`
  * string. Exposed so callers can reason about staleness programmatically.
  */
-export const PRICING_VERIFIED_ON = "2026-06-17";
+export const PRICING_VERIFIED_ON = "2026-06-24";
 
 /**
  * The built-in pricing table — the most commonly used models across the three
@@ -99,6 +99,12 @@ const MODELS: Record<string, ModelPricing> = {
   },
   "gemini-2.5-flash": { inputPerMTok: 0.3, outputPerMTok: 2.5 },
   "gemini-2.5-flash-lite": { inputPerMTok: 0.1, outputPerMTok: 0.4 },
+  // Embeddings (input-only; `outputPerMTok: 0`). Each full id is its own exact
+  // key — the digit-suffix resolver (see findModel) would not resolve a word
+  // suffix like `-small`/`-large` from a `text-embedding-3` base.
+  "text-embedding-3-small": { inputPerMTok: 0.02, outputPerMTok: 0 },
+  "text-embedding-3-large": { inputPerMTok: 0.13, outputPerMTok: 0 },
+  "gemini-embedding-001": { inputPerMTok: 0.15, outputPerMTok: 0 },
 };
 
 /**

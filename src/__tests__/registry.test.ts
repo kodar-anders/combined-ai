@@ -5,6 +5,8 @@ import { ProviderRegistry } from "../registry";
 import {
   type CompletionRequest,
   type CompletionResult,
+  type EmbeddingRequest,
+  type EmbeddingResult,
   type Provider,
 } from "../types";
 
@@ -564,5 +566,140 @@ describe("ProviderRegistry per-strategy methods", () => {
     await expect(
       registry.pipeline({ ...PROMPT, participants: [] }),
     ).rejects.toThrow(/at least one participant/);
+  });
+
+  it("broadcast rejects an embedding provider that doesn't support embeddings", async () => {
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    // `echo` has no `embed`, so resolving it as the embedder throws up front.
+    await expect(
+      registry.broadcast(
+        { ...PROMPT, participants: ["mine"] },
+        { embedding: { provider: "mine" } },
+      ),
+    ).rejects.toThrow('Provider "mine" does not support embeddings.');
+  });
+
+  it("broadcast attaches a semantic comparison from the configured embedder", async () => {
+    const answerer: Provider = {
+      name: "answerer",
+      complete: (req: CompletionRequest): Promise<CompletionResult> =>
+        Promise.resolve({ text: req.model ?? "?", model: "m" }),
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const embedder: Provider = {
+      ...answerer,
+      name: "embedder",
+      embed: (req: EmbeddingRequest): Promise<EmbeddingResult> =>
+        Promise.resolve({
+          // Distinct vectors per input so there are two clusters.
+          embeddings: req.input.map((_, i) => (i === 0 ? [1, 0] : [0, 1])),
+          model: "embed-model",
+        }),
+    };
+    const registry = new ProviderRegistry({
+      custom: {
+        answerer: { kind: "provider", provider: answerer },
+        embedder: { kind: "provider", provider: embedder },
+      },
+    });
+
+    const result = await registry.broadcast(
+      {
+        ...PROMPT,
+        participants: [
+          { provider: "answerer", model: "a" },
+          { provider: "answerer", model: "b" },
+        ],
+      },
+      { embedding: { provider: "embedder" } },
+    );
+
+    expect(result.semantic).toBeDefined();
+    expect(result.semantic?.clusters).toEqual([["answerer-a"], ["answerer-b"]]);
+  });
+});
+
+describe("ProviderRegistry.embed / embedMany", () => {
+  const calls: EmbeddingRequest[] = [];
+  const embedder: Provider = {
+    name: "embedder",
+    complete: () => {
+      throw new Error("complete not used in this test");
+    },
+    stream: () => {
+      throw new Error("stream not used in this test");
+    },
+    embed: (request: EmbeddingRequest): Promise<EmbeddingResult> => {
+      calls.push(request);
+      return Promise.resolve({
+        embeddings: request.input.map((_, i) => [i, i + 1]),
+        model: request.model ?? "default-embed",
+        usage: { inputTokens: 3, outputTokens: 0, totalTokens: 3 },
+      });
+    },
+  };
+
+  afterEach(() => {
+    calls.length = 0;
+  });
+
+  it("embedMany returns one vector per input and threads options through", async () => {
+    const registry = new ProviderRegistry({
+      custom: { e: { kind: "provider", provider: embedder } },
+    });
+
+    const result = await registry.embedMany("e", ["a", "b"], {
+      model: "m",
+      dimensions: 2,
+    });
+
+    expect(result.embeddings).toEqual([
+      [0, 1],
+      [1, 2],
+    ]);
+    expect(result.model).toBe("m");
+    expect(calls[0]).toEqual({ input: ["a", "b"], model: "m", dimensions: 2 });
+  });
+
+  it("embed returns the single vector", async () => {
+    const registry = new ProviderRegistry({
+      custom: { e: { kind: "provider", provider: embedder } },
+    });
+
+    const result = await registry.embed("e", "hello");
+
+    expect(result.embedding).toEqual([0, 1]);
+    expect(result.model).toBe("default-embed");
+    expect(result.usage).toEqual({
+      inputTokens: 3,
+      outputTokens: 0,
+      totalTokens: 3,
+    });
+  });
+
+  it("throws when the provider isn't configured", async () => {
+    const registry = new ProviderRegistry({
+      custom: { e: { kind: "provider", provider: embedder } },
+    });
+
+    await expect(registry.embed("nope", "x")).rejects.toThrow(
+      'No provider "nope" configured',
+    );
+  });
+
+  it("throws when the provider doesn't support embeddings", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(registry.embed("anthropic", "x")).rejects.toThrow(
+      'Provider "anthropic" does not support embeddings.',
+    );
+    await expect(registry.embedMany("anthropic", ["x"])).rejects.toThrow(
+      'Provider "anthropic" does not support embeddings.',
+    );
   });
 });
