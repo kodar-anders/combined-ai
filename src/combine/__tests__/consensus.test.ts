@@ -18,7 +18,8 @@ type Call = { provider: string; phase: Phase; request: CompletionRequest };
 
 /** Classify a phase from the shaped system prompt (mirrors the framing constants). */
 function phaseOf(request: CompletionRequest): Phase {
-  const system = request.system ?? "";
+  // Combine always forwards system as a string (its framing); coerce for the type.
+  const system = typeof request.system === "string" ? request.system : "";
   if (system.includes("Rewrite the following")) return "sanitize";
   if (system.includes("lead assistant")) return "synth";
   if (system.includes("produce only a critique")) return "critique";
@@ -168,6 +169,34 @@ describe("consensus", () => {
     expect(calls.every((c) => c.request.signal === controller.signal)).toBe(
       true,
     );
+  });
+
+  it("accepts an object-form system prompt, forwarding only its text", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls),
+      },
+    ];
+
+    await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+      // Combine builds its own framing and doesn't cache, so the marker is dropped
+      // and only the system text is forwarded (as a string) to each participant.
+      system: { text: "House style.", cacheControl: { ttl: "1h" } },
+    });
+
+    const draft = calls.find((c) => c.phase === "draft");
+    expect(typeof draft?.request.system).toBe("string");
+    expect(draft?.request.system).toContain("House style.");
   });
 
   it("feeds attributed drafts into critique and drafts + critiques into synthesis", async () => {
@@ -1069,6 +1098,39 @@ describe("consensus cost ledger + budget", () => {
     ]);
   });
 
+  it("carries cache subtotals into the aggregate usage (total + byParticipant)", async () => {
+    const calls: Call[] = [];
+    const cached: Usage = {
+      inputTokens: 100,
+      outputTokens: 0,
+      totalTokens: 100,
+      cachedInputTokens: 80,
+    };
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider(
+          "anthropic",
+          calls,
+          undefined,
+          undefined,
+          cached,
+        ),
+      },
+    ];
+
+    const result = await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic"],
+    });
+
+    // Single-provider path: one draft call, so the cached subtotal flows verbatim
+    // into both the overall total and the per-participant breakdown.
+    expect(result.usage?.total.cachedInputTokens).toBe(80);
+    expect(result.usage?.byParticipant.anthropic?.cachedInputTokens).toBe(80);
+  });
+
   it("skips critiques and sanitize once the budget is spent, but still synthesizes", async () => {
     const calls: Call[] = [];
     const events: CombineEvent[] = [];
@@ -1100,6 +1162,59 @@ describe("consensus cost ledger + budget", () => {
       e.type === "budget" && e.skipped !== undefined ? [e.skipped] : [],
     );
     expect(skipped).toEqual(["critiques", "sanitize"]);
+  });
+
+  it("does not trip the budget when the same token volume is cached (cheaper)", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const cachedModels = {
+      "anthropic-model": {
+        inputPerMTok: 1,
+        outputPerMTok: 0,
+        cachedInputPerMTok: 0.1,
+      },
+      "openai-model": {
+        inputPerMTok: 1,
+        outputPerMTok: 0,
+        cachedInputPerMTok: 0.1,
+      },
+      "gemini-model": {
+        inputPerMTok: 1,
+        outputPerMTok: 0,
+        cachedInputPerMTok: 0.1,
+      },
+    };
+    // The same 1M tokens that cost $1/draft uncached (and tripped a $2 budget in the
+    // prior test) cost $0.10/draft fully cached → 3 drafts = $0.30, well under $2.
+    const cached: Usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      totalTokens: 1_000_000,
+      cachedInputTokens: 1_000_000,
+    };
+    const roster = ["anthropic", "openai", "gemini"].map((name) => ({
+      id: name,
+      providerName: name as "anthropic" | "openai" | "gemini",
+      provider: fakeProvider(name, calls, undefined, undefined, cached),
+    }));
+
+    await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
+      {
+        budget: { usd: 2, models: cachedModels },
+        onEvent: (event) => events.push(event),
+      },
+    );
+
+    // The budget is never tripped, so critiques run and nothing is skipped.
+    expect(calls.filter((c) => c.phase === "critique").length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      events.filter((e) => e.type === "budget" && e.skipped !== undefined),
+    ).toHaveLength(0);
   });
 
   it("runs every phase when the budget is generous", async () => {

@@ -82,6 +82,28 @@ describe("OpenAIProvider.complete", () => {
     expect(body.stream).toBeUndefined();
   });
 
+  it("reads the object-form system prompt's text and ignores its cache marker", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [{ finish_reason: "stop", message: { content: "Hi" } }],
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      system: { text: "Be brief.", cacheControl: { ttl: "1h" } },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    // OpenAI caches automatically — the marker is dropped, only the text is sent.
+    expect(body.messages[0]).toEqual({ role: "system", content: "Be brief." });
+  });
+
   it("merges configured extra headers into the request", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
@@ -516,6 +538,60 @@ describe("OpenAIProvider.complete", () => {
       outputTokens: 5,
       totalTokens: 15,
     });
+  });
+
+  it("reports cached prompt tokens as a subset of inputTokens", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [{ finish_reason: "stop", message: { content: "Hi" } }],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 5,
+            total_tokens: 1005,
+            prompt_tokens_details: { cached_tokens: 800 },
+          },
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    // inputTokens stays = prompt_tokens (cached already inside it).
+    expect(result.usage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 5,
+      totalTokens: 1005,
+      cachedInputTokens: 800,
+    });
+  });
+
+  it("clamps an over-reported cached count to inputTokens", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1",
+          choices: [{ finish_reason: "stop", message: { content: "Hi" } }],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 5,
+            total_tokens: 105,
+            prompt_tokens_details: { cached_tokens: 1000 },
+          },
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage?.cachedInputTokens).toBe(100);
   });
 
   it("throws a typed ProviderError parsing the OpenAI error body", async () => {

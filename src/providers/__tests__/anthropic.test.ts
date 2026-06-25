@@ -456,6 +456,87 @@ describe("AnthropicProvider.complete", () => {
     });
   });
 
+  it("folds cache read/write buckets into a superset inputTokens", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          content: [{ type: "text", text: "Hi" }],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 8,
+            cache_read_input_tokens: 800,
+            cache_creation_input_tokens: 100,
+          },
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    // inputTokens = 100 + 800 + 100 = 1000 (superset); cache counts are subsets;
+    // totalTokens = inputTokens + outputTokens (no thinking residual).
+    expect(result.usage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 8,
+      totalTokens: 1008,
+      cachedInputTokens: 800,
+      cacheCreationInputTokens: 100,
+    });
+  });
+
+  it("omits the cache fields when no caching occurred (unchanged shape)", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          content: [{ type: "text", text: "Hi" }],
+          usage: { input_tokens: 12, output_tokens: 8 },
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage).toEqual({
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+    });
+  });
+
+  it("does not fabricate a total from cache buckets when input_tokens is missing", async () => {
+    // A gateway dropped input_tokens but left a cache bucket. Synthesizing
+    // inputTokens from the cache count alone would pass the cost layer's
+    // `inputTokens > 0` guard and underbill; report inputTokens: 0 instead.
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "claude-opus-4-8",
+          content: [{ type: "text", text: "Hi" }],
+          usage: { output_tokens: 8, cache_read_input_tokens: 800 },
+        }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(result.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 8,
+      totalTokens: 8,
+    });
+  });
+
   it("omits usage when the response carries none", async () => {
     mockFetch(() => ({
       ok: true,
@@ -571,6 +652,120 @@ describe("AnthropicProvider.complete", () => {
     expect(providerError.provider).toBe("anthropic");
     expect(providerError.status).toBeUndefined();
     expect(providerError.cause).toBeInstanceOf(TypeError);
+  });
+});
+
+describe("AnthropicProvider prompt caching", () => {
+  const okEmpty = () => ({
+    ok: true as const,
+    json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+  });
+
+  it("emits cache_control on a marked content part (default 5-minute TTL)", async () => {
+    const fetchMock = mockFetch(okEmpty);
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "big stable prefix", cacheControl: {} },
+            { type: "text", text: "varying question" },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages[0].content).toEqual([
+      {
+        type: "text",
+        text: "big stable prefix",
+        cache_control: { type: "ephemeral" },
+      },
+      { type: "text", text: "varying question" },
+    ]);
+    // 5-minute (default) cache does not need the extended-TTL beta header.
+    expect(init.headers).not.toHaveProperty("anthropic-beta");
+  });
+
+  it("emits the 1-hour TTL and sets the extended-cache beta header", async () => {
+    const fetchMock = mockFetch(okEmpty);
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "prefix", cacheControl: { ttl: "1h" } },
+          ],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.messages[0].content[0].cache_control).toEqual({
+      type: "ephemeral",
+      ttl: "1h",
+    });
+    expect(init.headers).toMatchObject({
+      "anthropic-beta": "extended-cache-ttl-2025-04-11",
+    });
+  });
+
+  it("caches the system prompt via the object form", async () => {
+    const fetchMock = mockFetch(okEmpty);
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      system: { text: "Big shared system prompt.", cacheControl: {} },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "Big shared system prompt.",
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+  });
+
+  it("degrades an object-form system without a marker to a plain string", async () => {
+    const fetchMock = mockFetch(okEmpty);
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      system: { text: "No caching here." },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.system).toBe("No caching here.");
+  });
+
+  it("throws when more than 4 cache breakpoints are marked", async () => {
+    mockFetch(okEmpty);
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    await expect(
+      provider.complete({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "a", cacheControl: {} },
+              { type: "text", text: "b", cacheControl: {} },
+              { type: "text", text: "c", cacheControl: {} },
+              { type: "text", text: "d", cacheControl: {} },
+            ],
+          },
+        ],
+        system: { text: "e", cacheControl: {} }, // 5th breakpoint
+      }),
+    ).rejects.toThrow(/at most 4 cache_control breakpoints/);
   });
 });
 

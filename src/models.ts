@@ -14,10 +14,18 @@
  * without waiting for a release. See {@link PRICING_VERIFIED_ON} for when these
  * numbers were last checked.
  *
- * Prices verified 2026-06-24 against:
+ * Prices verified 2026-06-25 against:
  * - Anthropic: https://platform.claude.com/docs/en/pricing
  * - OpenAI:    https://developers.openai.com/api/docs/pricing
  * - Google:    https://ai.google.dev/gemini-api/docs/pricing
+ *
+ * Prompt-cache rates: Anthropic's (read 0.1× input; write 1.25× input = the 5-minute
+ * TTL rate, so 1-hour writes under-bill) and Gemini's (read 0.1× input, tiered for
+ * 2.5 Pro) are carried. OpenAI cache-read rates are left unset — the current pricing
+ * page lists only the gpt-5.x generation, not the gpt-4.x models in this table, so
+ * they couldn't be verified; the cost helpers fall back to the full input rate
+ * (never a fabricated discount), keeping the "a wrong price is worse than undefined"
+ * stance until they're confirmed.
  */
 
 /** USD price per 1,000,000 tokens — the unit every provider publishes. */
@@ -26,6 +34,21 @@ export type ModelPricing = {
   inputPerMTok: number;
   /** Price per 1M output (completion) tokens, in USD. */
   outputPerMTok: number;
+  /**
+   * Price per 1M prompt-cache **read** tokens, in USD (a discounted re-use of a
+   * cached prefix; ~0.1× input for Anthropic and Gemini). Omit when unknown — the
+   * cost helpers then bill cache reads at the normal `inputPerMTok` (no fake
+   * discount). Can be tiered via `highTier.cachedInputPerMTok` (Gemini 2.5 Pro).
+   */
+  cachedInputPerMTok?: number;
+  /**
+   * Price per 1M prompt-cache **write** tokens, in USD (Anthropic charges a premium
+   * to populate the cache: 1.25× input for the 5-minute TTL, 2× for 1-hour). This
+   * field models the common 5-minute rate; 1-hour writes are under-billed. Omit when
+   * the provider has no separate write charge (OpenAI/Gemini) or it's unknown — the
+   * cost helpers then bill writes at `inputPerMTok`.
+   */
+  cacheWriteInputPerMTok?: number;
   /**
    * A higher pricing tier some models charge for large-context requests (e.g.
    * Gemini 2.5 Pro doubles its rate above 200k prompt tokens). When set, the cost
@@ -37,6 +60,12 @@ export type ModelPricing = {
     aboveInputTokens: number;
     inputPerMTok: number;
     outputPerMTok: number;
+    /**
+     * The cache-**read** rate at this tier, when it too is tiered (Gemini 2.5 Pro
+     * doubles its cached-input rate above 200k, mirroring its input rate). Omit to
+     * keep using the base `cachedInputPerMTok` above the threshold.
+     */
+    cachedInputPerMTok?: number;
   };
 };
 
@@ -61,7 +90,7 @@ export type CostOptions = {
  * The date the {@link MODELS} prices were last verified, as an ISO `YYYY-MM-DD`
  * string. Exposed so callers can reason about staleness programmatically.
  */
-export const PRICING_VERIFIED_ON = "2026-06-24";
+export const PRICING_VERIFIED_ON = "2026-06-25";
 
 /**
  * The built-in pricing table — the most commonly used models across the three
@@ -75,12 +104,37 @@ export const PRICING_VERIFIED_ON = "2026-06-24";
  * from the request's prompt size.
  */
 const MODELS: Record<string, ModelPricing> = {
-  // Anthropic
-  "claude-fable-5": { inputPerMTok: 10, outputPerMTok: 50 },
-  "claude-opus-4-8": { inputPerMTok: 5, outputPerMTok: 25 },
-  "claude-opus-4-7": { inputPerMTok: 5, outputPerMTok: 25 },
-  "claude-sonnet-4-6": { inputPerMTok: 3, outputPerMTok: 15 },
-  "claude-haiku-4-5": { inputPerMTok: 1, outputPerMTok: 5 },
+  // Anthropic. Cache read = 0.1× input, cache write = 1.25× input (5-minute TTL).
+  "claude-fable-5": {
+    inputPerMTok: 10,
+    outputPerMTok: 50,
+    cachedInputPerMTok: 1,
+    cacheWriteInputPerMTok: 12.5,
+  },
+  "claude-opus-4-8": {
+    inputPerMTok: 5,
+    outputPerMTok: 25,
+    cachedInputPerMTok: 0.5,
+    cacheWriteInputPerMTok: 6.25,
+  },
+  "claude-opus-4-7": {
+    inputPerMTok: 5,
+    outputPerMTok: 25,
+    cachedInputPerMTok: 0.5,
+    cacheWriteInputPerMTok: 6.25,
+  },
+  "claude-sonnet-4-6": {
+    inputPerMTok: 3,
+    outputPerMTok: 15,
+    cachedInputPerMTok: 0.3,
+    cacheWriteInputPerMTok: 3.75,
+  },
+  "claude-haiku-4-5": {
+    inputPerMTok: 1,
+    outputPerMTok: 5,
+    cachedInputPerMTok: 0.1,
+    cacheWriteInputPerMTok: 1.25,
+  },
   // OpenAI
   "gpt-4o": { inputPerMTok: 2.5, outputPerMTok: 10 },
   "gpt-4o-mini": { inputPerMTok: 0.15, outputPerMTok: 0.6 },
@@ -91,14 +145,24 @@ const MODELS: Record<string, ModelPricing> = {
   "gemini-2.5-pro": {
     inputPerMTok: 1.25,
     outputPerMTok: 10,
+    cachedInputPerMTok: 0.125,
     highTier: {
       aboveInputTokens: 200_000,
       inputPerMTok: 2.5,
       outputPerMTok: 15,
+      cachedInputPerMTok: 0.25,
     },
   },
-  "gemini-2.5-flash": { inputPerMTok: 0.3, outputPerMTok: 2.5 },
-  "gemini-2.5-flash-lite": { inputPerMTok: 0.1, outputPerMTok: 0.4 },
+  "gemini-2.5-flash": {
+    inputPerMTok: 0.3,
+    outputPerMTok: 2.5,
+    cachedInputPerMTok: 0.03,
+  },
+  "gemini-2.5-flash-lite": {
+    inputPerMTok: 0.1,
+    outputPerMTok: 0.4,
+    cachedInputPerMTok: 0.01,
+  },
   // Embeddings (input-only; `outputPerMTok: 0`). Each full id is its own exact
   // key — the digit-suffix resolver (see findModel) would not resolve a word
   // suffix like `-small`/`-large` from a `text-embedding-3` base.

@@ -7,6 +7,7 @@
  */
 
 export type {
+  CacheControl,
   CompletionRequest,
   CompletionResult,
   ContentPart,
@@ -21,6 +22,7 @@ export type {
   Provider,
   ResponseFormat,
   Role,
+  SystemPrompt,
   TextPart,
   ToolCall,
   ToolChoice,

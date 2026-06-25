@@ -95,6 +95,174 @@ describe("costOfUsage", () => {
     expect(breakdown?.outputCost).toBe(8);
   });
 
+  it("prices cache reads at the discounted rate, the remainder at full rate", () => {
+    // claude-opus-4-8: input $5, cached read $0.5 per MTok. 1M prompt of which
+    // 800k were cache reads → 200k * $5 + 800k * $0.5 = $1.0 + $0.4 = $1.4.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedInputTokens: 800_000,
+        totalTokens: 1_000_000,
+      },
+      "claude-opus-4-8",
+    );
+    expect(breakdown?.inputCost).toBeCloseTo(1.4, 10);
+  });
+
+  it("a cached call prices below the same call uncached", () => {
+    const cached = costOfUsage(
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedInputTokens: 1_000_000,
+        totalTokens: 1_000_000,
+      },
+      "claude-opus-4-8",
+    );
+    const uncached = costOfUsage(usage(1_000_000, 0), "claude-opus-4-8");
+    expect(cached!.inputCost).toBeLessThan(uncached!.inputCost);
+    expect(cached?.inputCost).toBeCloseTo(0.5, 10); // 1M * $0.5/MTok
+  });
+
+  it("prices Anthropic cache writes at the write premium", () => {
+    // claude-opus-4-8: input $5, cache write $6.25 per MTok. A first cached call:
+    // 200k uncached + 800k written → 200k * $5 + 800k * $6.25 = $1.0 + $5.0 = $6.0.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cacheCreationInputTokens: 800_000,
+        totalTokens: 1_000_000,
+      },
+      "claude-opus-4-8",
+    );
+    expect(breakdown?.inputCost).toBeCloseTo(6, 10);
+  });
+
+  it("falls back to the full input rate when a model lists no cached rate", () => {
+    // gpt-4.1 has no cachedInputPerMTok, so cache reads bill at the $2 input rate:
+    // the cost matches the same all-uncached call (no fabricated discount).
+    const cached = costOfUsage(
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedInputTokens: 1_000_000,
+        totalTokens: 1_000_000,
+      },
+      "gpt-4.1",
+    );
+    expect(cached?.inputCost).toBe(2);
+  });
+
+  it("prices Gemini cache reads at the model's cached rate", () => {
+    // gemini-2.5-flash-lite: input $0.1, cached $0.01 per MTok. 1M prompt, 800k
+    // cached → 200k*$0.1 + 800k*$0.01 = $0.02 + $0.008 = $0.028.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedInputTokens: 800_000,
+        totalTokens: 1_000_000,
+      },
+      "gemini-2.5-flash-lite",
+    );
+    expect(breakdown?.inputCost).toBeCloseTo(0.028, 10);
+  });
+
+  it("uses gemini-2.5-pro's high-tier cached rate above 200k prompt tokens", () => {
+    // >200k → high tier: input $2.50, cached $0.25 per MTok. 300k prompt, 100k
+    // cached → 200k*$2.50 + 100k*$0.25 = $0.5 + $0.025 = $0.525.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 300_000,
+        outputTokens: 0,
+        cachedInputTokens: 100_000,
+        totalTokens: 300_000,
+      },
+      "gemini-2.5-pro",
+    );
+    expect(breakdown?.inputCost).toBeCloseTo(0.525, 10);
+  });
+
+  it("uses gemini-2.5-pro's base cached rate at/below 200k prompt tokens", () => {
+    // ≤200k → base: input $1.25, cached $0.125 per MTok. 200k prompt, 100k cached
+    // → 100k*$1.25 + 100k*$0.125 = $0.125 + $0.0125 = $0.1375.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 200_000,
+        outputTokens: 0,
+        cachedInputTokens: 100_000,
+        totalTokens: 200_000,
+      },
+      "gemini-2.5-pro",
+    );
+    expect(breakdown?.inputCost).toBeCloseTo(0.1375, 10);
+  });
+
+  it("falls back to the base cached rate above the threshold when highTier omits it", () => {
+    // A tiered model whose highTier omits cachedInputPerMTok: per the documented
+    // contract, cache reads above the threshold use the BASE cached rate ($1/MTok),
+    // not the high-tier input rate ($20/MTok) — guards a ~20x over-bill regression.
+    const models = {
+      tiered: {
+        inputPerMTok: 10,
+        outputPerMTok: 0,
+        cachedInputPerMTok: 1,
+        highTier: { aboveInputTokens: 100, inputPerMTok: 20, outputPerMTok: 0 },
+      },
+    };
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 200, // >100 → high tier
+        outputTokens: 0,
+        cachedInputTokens: 200, // all cache reads
+        totalTokens: 200,
+      },
+      "tiered",
+      { models },
+    );
+    expect(breakdown?.inputCost).toBeCloseTo((200 * 1) / 1_000_000, 12);
+  });
+
+  it("keeps the Gemini thinking residual at zero for a cached Anthropic call", () => {
+    // Anthropic superset: input_tokens(100) + read(800) + write(100) folded into
+    // inputTokens=1000, totalTokens=inputTokens+output → residual is 0 (no thinking
+    // add-on). claude-haiku-4-5: input $1, read $0.1, write $1.25 per MTok.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedInputTokens: 800_000,
+        cacheCreationInputTokens: 100_000,
+        totalTokens: 1_000_000,
+      },
+      "claude-haiku-4-5",
+    );
+    // 100k * $1 + 800k * $0.1 + 100k * $1.25 = $0.1 + $0.08 + $0.125 = $0.305.
+    expect(breakdown).toEqual({
+      model: "claude-haiku-4-5",
+      inputCost: expect.closeTo(0.305, 10),
+      outputCost: 0,
+      totalCost: expect.closeTo(0.305, 10),
+    });
+  });
+
+  it("never produces a negative input cost when a cache count exceeds the remainder", () => {
+    // A skewed usage where cached > input (e.g. a misbehaving gateway). The uncached
+    // remainder is clamped to 0, so the full-rate portion can't go negative.
+    const breakdown = costOfUsage(
+      {
+        inputTokens: 100,
+        outputTokens: 0,
+        cachedInputTokens: 1000,
+        totalTokens: 100,
+      },
+      "claude-opus-4-8",
+    );
+    expect(breakdown!.inputCost).toBeGreaterThanOrEqual(0);
+  });
+
   it("returns undefined for an unknown model", () => {
     expect(costOfUsage(usage(100, 100), "mystery-model")).toBeUndefined();
   });

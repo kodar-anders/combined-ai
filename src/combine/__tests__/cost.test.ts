@@ -67,6 +67,23 @@ describe("combineCost", () => {
     expect(cost?.byParticipant.google).toBeCloseTo(0.375, 10);
   });
 
+  it("prices cached calls cheaper via each call's usage", () => {
+    // claude-opus-4-8: input $5, cached read $0.5 per MTok. A fully-cached 1M call
+    // costs $0.5 vs $5 uncached — the discount flows through the per-call ledger.
+    const cached: Usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      totalTokens: 1_000_000,
+      cachedInputTokens: 1_000_000,
+    };
+    const cost = combineCost(
+      resultWith([
+        { id: "anthropic", model: "claude-opus-4-8", usage: cached },
+      ]),
+    );
+    expect(cost?.totalCost).toBeCloseTo(0.5, 10);
+  });
+
   it("skips calls whose model is unknown to the registry (total understates)", () => {
     const cost = combineCost(
       resultWith([

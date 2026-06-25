@@ -23,7 +23,11 @@ import { type CompletionResult, type Usage } from "./types";
 export type CostBreakdown = {
   /** The canonical model id the usage was priced against. */
   model: string;
-  /** Cost of the input (prompt) tokens, in USD. */
+  /**
+   * Cost of the input (prompt) tokens, in USD — including any prompt-cache reads
+   * (discounted) and writes (premium); the cache split is folded in here, not
+   * broken out separately.
+   */
   inputCost: number;
   /** Cost of the output (completion) tokens, in USD. */
   outputCost: number;
@@ -53,6 +57,14 @@ export type CostBreakdown = {
  * outputTokens` at the output rate. For Anthropic/OpenAI that residual is 0, so
  * they're unaffected. (We never price off `totalTokens` directly — its definition
  * differs across providers.)
+ *
+ * **Prompt caching.** `inputTokens` is the full prompt; `cachedInputTokens` (reads)
+ * and `cacheCreationInputTokens` (writes) are subsets of it. The uncached remainder
+ * bills at `inputPerMTok`, cache reads at `cachedInputPerMTok` (a discount), and
+ * cache writes at `cacheWriteInputPerMTok` (a premium); each cache rate falls back
+ * to `inputPerMTok` when the model lists none, so an absent rate never fabricates a
+ * discount. The cache-read rate follows the selected tier (Gemini 2.5 Pro's cached
+ * rate doubles above 200k like its input rate); the write rate is base-only.
  */
 export function costOfUsage(
   usage: Usage,
@@ -72,14 +84,35 @@ export function costOfUsage(
       ? highTier
       : info.pricing;
   const { inputPerMTok, outputPerMTok } = tier;
+  // Cache reads can be tiered (Gemini 2.5 Pro), so prefer the selected tier's rate,
+  // then the base cached rate (per ModelPricing's contract: omit highTier.cachedInputPerMTok
+  // to keep the base rate above the threshold), then the plain input rate. Writes
+  // aren't tiered (Anthropic only, no highTier), so read off the base.
+  const cachedRate =
+    tier.cachedInputPerMTok ?? info.pricing.cachedInputPerMTok ?? inputPerMTok;
+  const writeRate = info.pricing.cacheWriteInputPerMTok ?? inputPerMTok;
+
+  const cachedTokens = usage.cachedInputTokens ?? 0;
+  const cacheWriteTokens = usage.cacheCreationInputTokens ?? 0;
+  // The remainder after the (subset) cache reads/writes; clamped so a gateway that
+  // over-reports a cache count can't drive the full-rate portion negative.
+  const uncachedTokens = Math.max(
+    0,
+    usage.inputTokens - cachedTokens - cacheWriteTokens,
+  );
+
   const thinkingTokens = Math.max(
     0,
     usage.totalTokens - usage.inputTokens - usage.outputTokens,
   );
   const billableOutputTokens = usage.outputTokens + thinkingTokens;
-  // Multiply before dividing to keep the intermediate within safe-integer range
+  // Multiply before dividing to keep the intermediates within safe-integer range
   // and minimize float error (token counts and per-MTok prices are small).
-  const inputCost = (usage.inputTokens * inputPerMTok) / 1_000_000;
+  const inputCost =
+    (uncachedTokens * inputPerMTok +
+      cachedTokens * cachedRate +
+      cacheWriteTokens * writeRate) /
+    1_000_000;
   const outputCost = (billableOutputTokens * outputPerMTok) / 1_000_000;
   return {
     model: info.id,

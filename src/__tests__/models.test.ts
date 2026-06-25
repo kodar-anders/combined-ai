@@ -6,7 +6,13 @@ describe("findModel", () => {
   it("resolves an exact built-in key", () => {
     expect(findModel("claude-opus-4-8")).toEqual({
       id: "claude-opus-4-8",
-      pricing: { inputPerMTok: 5, outputPerMTok: 25 },
+      pricing: {
+        inputPerMTok: 5,
+        outputPerMTok: 25,
+        // Anthropic cache rates: read 0.1× input, write 1.25× input (5-min TTL).
+        cachedInputPerMTok: 0.5,
+        cacheWriteInputPerMTok: 6.25,
+      },
     });
   });
 
@@ -41,10 +47,12 @@ describe("findModel", () => {
     const pro = findModel("gemini-2.5-pro")?.pricing;
     expect(pro?.inputPerMTok).toBe(1.25);
     expect(pro?.outputPerMTok).toBe(10);
+    expect(pro?.cachedInputPerMTok).toBe(0.125);
     expect(pro?.highTier).toEqual({
       aboveInputTokens: 200_000,
       inputPerMTok: 2.5,
       outputPerMTok: 15,
+      cachedInputPerMTok: 0.25,
     });
     expect(findModel("gemini-2.5-flash")?.id).toBe("gemini-2.5-flash");
   });
@@ -72,6 +80,8 @@ describe("findModel", () => {
     expect(findModel("claude-sonnet-4-6")?.pricing).toEqual({
       inputPerMTok: 3,
       outputPerMTok: 15,
+      cachedInputPerMTok: 0.3,
+      cacheWriteInputPerMTok: 3.75,
     });
     expect(findModel("gpt-4o-mini")?.pricing).toEqual({
       inputPerMTok: 0.15,
@@ -80,6 +90,7 @@ describe("findModel", () => {
     expect(findModel("gemini-2.5-flash-lite")?.pricing).toEqual({
       inputPerMTok: 0.1,
       outputPerMTok: 0.4,
+      cachedInputPerMTok: 0.01,
     });
   });
 

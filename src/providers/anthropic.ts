@@ -9,6 +9,7 @@ import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import { requestWithRetry, type RetryOptions } from "../transport";
 import {
+  type CacheControl,
   type CompletionRequest,
   type CompletionResult,
   type ContentPart,
@@ -17,6 +18,7 @@ import {
   type Message,
   type Provider,
   type Role,
+  type SystemPrompt,
   type ToolCall,
   type ToolChoice,
   type Usage,
@@ -40,6 +42,8 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 16000;
 /** Streaming has no timeout concern, so give the model more room. */
 const DEFAULT_STREAM_MAX_TOKENS = 64000;
+/** Anthropic accepts at most 4 `cache_control` breakpoints per request. */
+const MAX_CACHE_BREAKPOINTS = 4;
 
 export class AnthropicProvider implements Provider {
   readonly name = "anthropic";
@@ -58,12 +62,13 @@ export class AnthropicProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
+    const { extendedCacheTtl } = prepareCacheControl(request);
     const response = await requestWithRetry(
       "anthropic",
       `${this.#baseUrl}/v1/messages`,
       {
         method: "POST",
-        headers: this.#headers(),
+        headers: this.#headers(extendedCacheTtl),
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
         ),
@@ -98,12 +103,13 @@ export class AnthropicProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
+    const { extendedCacheTtl } = prepareCacheControl(request);
     const response = await requestWithRetry(
       "anthropic",
       `${this.#baseUrl}/v1/messages`,
       {
         method: "POST",
-        headers: this.#headers(),
+        headers: this.#headers(extendedCacheTtl),
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
         ),
@@ -139,11 +145,19 @@ export class AnthropicProvider implements Provider {
     }
   }
 
-  #headers(): Record<string, string> {
+  /**
+   * `extendedCacheTtl` adds the beta header the 1-hour cache TTL requires; computed
+   * once per request by {@link prepareCacheControl} and passed in (so we don't
+   * re-scan the request here and risk disagreeing with the body).
+   */
+  #headers(extendedCacheTtl = false): Record<string, string> {
     return {
       "x-api-key": this.#apiKey,
       "anthropic-version": ANTHROPIC_VERSION,
       "content-type": "application/json",
+      ...(extendedCacheTtl
+        ? { "anthropic-beta": "extended-cache-ttl-2025-04-11" }
+        : {}),
     };
   }
 
@@ -159,7 +173,7 @@ export class AnthropicProvider implements Provider {
       messages: request.messages.map((message) => toAnthropicMessage(message)),
     };
     if (request.system !== undefined) {
-      body.system = request.system;
+      body.system = toAnthropicSystem(request.system);
     }
     if (request.responseFormat !== undefined) {
       // Anthropic's native structured output: a top-level output_config.format
@@ -198,10 +212,26 @@ type AnthropicSource =
   | { type: "base64"; media_type: string; data: string }
   | { type: "url"; url: string };
 
+type AnthropicCacheControl = { type: "ephemeral"; ttl?: "1h" };
+
+type AnthropicTextBlock = {
+  type: "text";
+  text: string;
+  cache_control?: AnthropicCacheControl;
+};
+
 type AnthropicBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; source: AnthropicSource }
-  | { type: "document"; source: AnthropicSource }
+  | AnthropicTextBlock
+  | {
+      type: "image";
+      source: AnthropicSource;
+      cache_control?: AnthropicCacheControl;
+    }
+  | {
+      type: "document";
+      source: AnthropicSource;
+      cache_control?: AnthropicCacheControl;
+    }
   | {
       type: "tool_use";
       id?: string;
@@ -240,11 +270,23 @@ function toAnthropicMessage(message: Message): {
 function toAnthropicBlock(part: ContentPart): AnthropicBlock {
   switch (part.type) {
     case "text":
-      return { type: "text", text: part.text };
+      return {
+        type: "text",
+        text: part.text,
+        ...cacheControlField(part.cacheControl),
+      };
     case "image":
-      return { type: "image", source: toAnthropicSource(part.source) };
+      return {
+        type: "image",
+        source: toAnthropicSource(part.source),
+        ...cacheControlField(part.cacheControl),
+      };
     case "file":
-      return { type: "document", source: toAnthropicSource(part.source) };
+      return {
+        type: "document",
+        source: toAnthropicSource(part.source),
+        ...cacheControlField(part.cacheControl),
+      };
     case "tool_use":
       return {
         type: "tool_use",
@@ -269,6 +311,90 @@ function toAnthropicSource(source: MediaSource): AnthropicSource {
   return source.kind === "base64"
     ? { type: "base64", media_type: source.mediaType, data: source.data }
     : { type: "url", url: source.url };
+}
+
+/** Map the provider-agnostic {@link CacheControl} onto Anthropic's `cache_control`. */
+function toAnthropicCacheControl(
+  cacheControl: CacheControl | undefined,
+): AnthropicCacheControl | undefined {
+  if (cacheControl === undefined) {
+    return undefined;
+  }
+  // Omit `ttl` for the default 5-minute ephemeral cache; pass "1h" through.
+  return cacheControl.ttl === undefined
+    ? { type: "ephemeral" }
+    : { type: "ephemeral", ttl: cacheControl.ttl };
+}
+
+/** Spread helper: `{ cache_control }` when a marker is set, else `{}` (field omitted). */
+function cacheControlField(cacheControl: CacheControl | undefined): {
+  cache_control?: AnthropicCacheControl;
+} {
+  const mapped = toAnthropicCacheControl(cacheControl);
+  return mapped === undefined ? {} : { cache_control: mapped };
+}
+
+/**
+ * Map the request's system prompt onto Anthropic's `system`: a bare string stays a
+ * string, but the {@link SystemPrompt} object form with a cache marker becomes a
+ * one-block text array carrying `cache_control` (Anthropic's way to cache the
+ * system prompt). A `SystemPrompt` without a marker degrades to its text string.
+ */
+function toAnthropicSystem(
+  system: string | SystemPrompt,
+): string | AnthropicTextBlock[] {
+  if (typeof system === "string") {
+    return system;
+  }
+  const cacheControl = toAnthropicCacheControl(system.cacheControl);
+  return cacheControl === undefined
+    ? system.text
+    : [{ type: "text", text: system.text, cache_control: cacheControl }];
+}
+
+/**
+ * Scan the request for {@link CacheControl} markers (on the system prompt and on
+ * text/image/file content parts): enforce Anthropic's 4-breakpoint limit up front
+ * (a clear error beats a raw 400) and report whether any breakpoint uses the 1-hour
+ * TTL (which needs a beta header). Done once per request so {@link AnthropicProvider}
+ * `#headers` and the body builder can't disagree.
+ */
+function prepareCacheControl(request: CompletionRequest): {
+  extendedCacheTtl: boolean;
+} {
+  let count = 0;
+  let extendedCacheTtl = false;
+  const note = (cacheControl: CacheControl | undefined): void => {
+    if (cacheControl === undefined) {
+      return;
+    }
+    count += 1;
+    if (cacheControl.ttl === "1h") {
+      extendedCacheTtl = true;
+    }
+  };
+
+  if (typeof request.system === "object") {
+    note(request.system.cacheControl);
+  }
+  for (const message of request.messages) {
+    if (typeof message.content === "string") {
+      continue;
+    }
+    for (const part of message.content) {
+      // `cacheControl` exists only on text/image/file parts; the `in` check narrows.
+      if ("cacheControl" in part) {
+        note(part.cacheControl);
+      }
+    }
+  }
+
+  if (count > MAX_CACHE_BREAKPOINTS) {
+    throw new Error(
+      `Anthropic allows at most ${MAX_CACHE_BREAKPOINTS} cache_control breakpoints per request; got ${count}. A breakpoint caches the whole prefix up to it, so mark fewer blocks (e.g. only the last stable one).`,
+    );
+  }
+  return { extendedCacheTtl };
 }
 
 function toArray(value: unknown): unknown[] {
@@ -338,17 +464,46 @@ function normalizeFinishReason(
   }
 }
 
-/** Anthropic reports `usage.input_tokens`/`output_tokens`; it has no total field. */
+/**
+ * Anthropic reports `usage.input_tokens` (the uncached prompt remainder) plus
+ * separate `cache_read_input_tokens` / `cache_creation_input_tokens` buckets, and
+ * has no total field. We normalize `inputTokens` to the full billable prompt
+ * (base + reads + writes) so it's a superset with the cache counts as subsets —
+ * matching OpenAI/Gemini and letting one cost formula apply. `cachedInputTokens`
+ * (reads) and `cacheCreationInputTokens` (writes) are set only when non-zero.
+ *
+ * Defensive: if a gateway dropped `input_tokens`, we don't synthesize a total from
+ * the cache buckets alone (that would pass the cost layer's `inputTokens <= 0`
+ * guard and underbill) — we report `inputTokens: 0` so pricing declines.
+ */
 function extractUsage(data: unknown): Usage | undefined {
   const usage = isRecord(data) ? data.usage : undefined;
   if (!isRecord(usage)) {
     return undefined;
   }
-  const inputTokens =
-    typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
   const outputTokens =
     typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
-  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+  if (typeof usage.input_tokens !== "number") {
+    return { inputTokens: 0, outputTokens, totalTokens: outputTokens };
+  }
+  const cacheRead =
+    typeof usage.cache_read_input_tokens === "number"
+      ? usage.cache_read_input_tokens
+      : 0;
+  const cacheCreation =
+    typeof usage.cache_creation_input_tokens === "number"
+      ? usage.cache_creation_input_tokens
+      : 0;
+  // The cache buckets are disjoint from input_tokens, so they always sum to a
+  // valid superset (each ≤ inputTokens) — no clamp needed here.
+  const inputTokens = usage.input_tokens + cacheRead + cacheCreation;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    ...(cacheRead > 0 ? { cachedInputTokens: cacheRead } : {}),
+    ...(cacheCreation > 0 ? { cacheCreationInputTokens: cacheCreation } : {}),
+  };
 }
 
 /** Text from any `type: "refusal"` content blocks `extractText` skips. */

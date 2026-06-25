@@ -15,7 +15,8 @@ type Call = { provider: string; phase: Phase; request: CompletionRequest };
 
 /** Classify a phase from the shaped system prompt (mirrors the framing constants). */
 function phaseOf(request: CompletionRequest): Phase {
-  const system = request.system ?? "";
+  // Combine always forwards system as a string (its framing); coerce for the type.
+  const system = typeof request.system === "string" ? request.system : "";
   if (system.includes("Rewrite the following")) return "sanitize";
   if (system.includes("revise the current answer")) return "refine";
   return "first";

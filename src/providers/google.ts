@@ -205,7 +205,13 @@ export class GoogleProvider implements Provider {
       generationConfig,
     };
     if (request.system !== undefined) {
-      body.systemInstruction = { parts: [{ text: request.system }] };
+      // Gemini has no per-request cache breakpoints (implicit caching is automatic),
+      // so a SystemPrompt's cacheControl is ignored — read its text only.
+      const text =
+        typeof request.system === "string"
+          ? request.system
+          : request.system.text;
+      body.systemInstruction = { parts: [{ text }] };
     }
     if (request.tools !== undefined) {
       // Tool parameter schemas need the same OpenAPI-3-subset transform as
@@ -471,8 +477,11 @@ function extractFinishReason(data: unknown): string | undefined {
 
 /**
  * Gemini reports `usageMetadata.promptTokenCount`/`candidatesTokenCount`/
- * `totalTokenCount`. `totalTokenCount` includes thinking tokens, so it can
- * exceed prompt + candidates — we keep the provider's own total verbatim.
+ * `totalTokenCount`, plus `cachedContentTokenCount` for implicitly-cached prompt
+ * tokens (a subset of `promptTokenCount`, so `inputTokens` already includes them).
+ * `totalTokenCount` includes thinking tokens, so it can exceed prompt + candidates
+ * — we keep the provider's own total verbatim. The cached count is clamped to
+ * `[0, inputTokens]` to defend against an over-reported value.
  */
 function extractUsage(data: unknown): Usage | undefined {
   const usage = isRecord(data) ? data.usageMetadata : undefined;
@@ -489,7 +498,17 @@ function extractUsage(data: unknown): Usage | undefined {
     typeof usage.totalTokenCount === "number"
       ? usage.totalTokenCount
       : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
+  const cachedRaw =
+    typeof usage.cachedContentTokenCount === "number"
+      ? usage.cachedContentTokenCount
+      : 0;
+  const cachedInputTokens = Math.min(Math.max(0, cachedRaw), inputTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
+  };
 }
 
 /** Maps Gemini's `finishReason` (and prompt block reasons) onto the union. */

@@ -9,6 +9,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **Prompt-cache breakpoints (Anthropic)** (`src/types.ts`, `src/providers/anthropic.ts`):
+  a new `CacheControl` (`{ ttl?: "1h" }`) marker can be placed on a content part via
+  `cacheControl` (on `TextPart`/`ImagePart`/`FilePart`) or on the system prompt via the new
+  object form `system: { text, cacheControl }` (`SystemPrompt`). The Anthropic provider
+  emits `cache_control` on the matching content/system blocks, enforces the 4-breakpoint
+  limit with a clear error (instead of a raw 400), and sends the `extended-cache-ttl`
+  beta header only when a `ttl: "1h"` breakpoint is present. OpenAI and Gemini ignore the
+  marker (they cache automatically / implicitly), reading only the system text. `combine`
+  builds its own prompts and does not honor `cacheControl` (it forwards system text only).
+
+- **Prompt-cache reporting + pricing** (`src/types.ts`, `src/providers`, `src/models.ts`,
+  `src/cost.ts`): `Usage` gains optional `cachedInputTokens` (a discounted cache **read**)
+  and `cacheCreationInputTokens` (an Anthropic cache **write**), both subsets of
+  `inputTokens` and set only when the provider reports them. Each provider extracts its own
+  cached-token fields (Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`,
+  OpenAI `prompt_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount`).
+  `ModelPricing` gains optional `cachedInputPerMTok` (read rate, tier-aware via
+  `highTier.cachedInputPerMTok`) and `cacheWriteInputPerMTok` (write rate); `costOf`/
+  `costOfUsage` bill cache reads at the discount and writes at the premium, each falling
+  back to the normal input rate when a model lists no cache rate (no fabricated discount).
+  Anthropic (read 0.1× input, write 1.25× input — the 5-minute TTL rate, so 1-hour writes
+  under-bill) and Gemini (read 0.1× input, tiered for 2.5 Pro) cache rates are carried;
+  OpenAI cache rates are left unset (the live pricing page now lists only gpt-5.x, so the
+  gpt-4.x entries couldn't be verified — cached calls price conservatively until then).
+  Savings flow through `combineCost` and `combine` budget caps automatically. **Note:**
+  this is `complete()`-only — `stream()` reports no usage today.
+
 - **Embedding signals in `combine`** (`src/combine/embedding.ts`): a `CombineOptions.embedding`
   (`{ provider, model? }`) embeds participants' answers with a single designated model to add
   **informational** signals — they never change a returned or merged value, and a failed
@@ -36,6 +63,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   to the registry (input-only, `outputPerMTok: 0`). A pure `cosineSimilarity(a, b)` helper
   is exported for comparing vectors. An optional `dimensions` reduces the output vector
   size (OpenAI `dimensions` / Gemini `outputDimensionality`).
+
+### Changed
+
+- **Anthropic `usage.inputTokens` is now the total billable prompt** (it includes cache
+  reads/writes, which Anthropic reports in buckets outside `input_tokens`). Unchanged for
+  non-cached calls; OpenAI/Gemini are unchanged (their prompt count already included cached
+  tokens).
 
 ## [0.2.0] - 2026-06-18
 

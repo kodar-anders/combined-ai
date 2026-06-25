@@ -288,7 +288,11 @@ function toOpenAIMessages(request: CompletionRequest): OpenAIMessage[] {
     toOpenAIWireMessages(message),
   );
   if (request.system !== undefined) {
-    messages.unshift({ role: "system", content: request.system });
+    // OpenAI has no per-request cache breakpoints (it caches automatically), so a
+    // SystemPrompt's cacheControl is ignored — read its text only.
+    const content =
+      typeof request.system === "string" ? request.system : request.system.text;
+    messages.unshift({ role: "system", content });
   }
   return messages;
 }
@@ -468,7 +472,12 @@ function normalizeFinishReason(
   }
 }
 
-/** OpenAI reports `usage.prompt_tokens`/`completion_tokens`/`total_tokens`. */
+/**
+ * OpenAI reports `usage.prompt_tokens`/`completion_tokens`/`total_tokens`, with any
+ * cached prompt tokens nested under `prompt_tokens_details.cached_tokens` — a subset
+ * of `prompt_tokens`, so `inputTokens` already includes them. The cached count is
+ * clamped to `[0, inputTokens]` to defend against a gateway over-reporting it.
+ */
 function extractUsage(data: unknown): Usage | undefined {
   const usage = isRecord(data) ? data.usage : undefined;
   if (!isRecord(usage)) {
@@ -482,7 +491,18 @@ function extractUsage(data: unknown): Usage | undefined {
     typeof usage.total_tokens === "number"
       ? usage.total_tokens
       : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
+  const details = usage.prompt_tokens_details;
+  const cachedRaw =
+    isRecord(details) && typeof details.cached_tokens === "number"
+      ? details.cached_tokens
+      : 0;
+  const cachedInputTokens = Math.min(Math.max(0, cachedRaw), inputTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
+  };
 }
 
 function extractRefusal(data: unknown): string | undefined {

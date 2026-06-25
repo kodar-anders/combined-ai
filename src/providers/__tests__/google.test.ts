@@ -80,6 +80,30 @@ describe("GoogleProvider.complete", () => {
     });
   });
 
+  it("reads the object-form system prompt's text and ignores its cache marker", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [
+            { finishReason: "STOP", content: { parts: [{ text: "Hi" }] } },
+          ],
+        }),
+    }));
+
+    const provider = new GoogleProvider({ apiKey: "key-test" });
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      system: { text: "Be brief.", cacheControl: { ttl: "1h" } },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    // Gemini caches implicitly — the marker is dropped, only the text is sent.
+    expect(body.systemInstruction).toEqual({ parts: [{ text: "Be brief." }] });
+  });
+
   it("omits systemInstruction when no system prompt is given and maps the assistant role to model", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
@@ -531,6 +555,38 @@ describe("GoogleProvider.complete", () => {
       inputTokens: 10,
       outputTokens: 5,
       totalTokens: 42,
+    });
+  });
+
+  it("reports cachedContentTokenCount as a subset of inputTokens", async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-2.5-pro",
+          candidates: [
+            { finishReason: "STOP", content: { parts: [{ text: "Hi" }] } },
+          ],
+          usageMetadata: {
+            promptTokenCount: 1000,
+            candidatesTokenCount: 5,
+            totalTokenCount: 1005,
+            cachedContentTokenCount: 800,
+          },
+        }),
+    }));
+
+    const provider = new GoogleProvider({ apiKey: "key-test" });
+    const result = await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    // inputTokens stays = promptTokenCount (cached already inside it).
+    expect(result.usage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 5,
+      totalTokens: 1005,
+      cachedInputTokens: 800,
     });
   });
 

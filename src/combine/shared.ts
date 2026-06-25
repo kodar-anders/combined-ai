@@ -22,6 +22,7 @@ import {
   type ContentPart,
   type Message,
   type Provider,
+  type SystemPrompt,
   type TextPart,
   type Usage,
 } from "../types";
@@ -87,13 +88,16 @@ const SANITIZE_FRAMING =
  */
 export function completionFor(
   request: CombineRequest,
-  system: string | undefined,
+  system: string | SystemPrompt | undefined,
   messages: Message[],
   overrides?: ParticipantOverrides,
 ): CompletionRequest {
   const completion: CompletionRequest = { messages };
-  if (system !== undefined) {
-    completion.system = system;
+  // Combine builds its own framing and doesn't apply prompt caching, so forward
+  // only the system text — a caller's SystemPrompt cacheControl is dropped here.
+  const text = systemText(system);
+  if (text !== undefined) {
+    completion.system = text;
   }
   const model = overrides?.model ?? request.model;
   if (model !== undefined) {
@@ -117,12 +121,23 @@ export function completionFor(
   return completion;
 }
 
+/**
+ * The text of a caller's system prompt, dropping any {@link SystemPrompt}
+ * cacheControl — combine builds its own prompts and doesn't honor cache markers.
+ */
+function systemText(
+  system: string | SystemPrompt | undefined,
+): string | undefined {
+  return typeof system === "object" ? system.text : system;
+}
+
 /** Prepend the caller's system prompt (if any) to a phase's framing instruction. */
 export function composeSystem(
-  userSystem: string | undefined,
+  userSystem: string | SystemPrompt | undefined,
   framing: string,
 ): string {
-  return userSystem === undefined ? framing : `${userSystem}\n\n${framing}`;
+  const text = systemText(userSystem);
+  return text === undefined ? framing : `${text}\n\n${framing}`;
 }
 
 /** Run one participant's completion, capturing success or failure as an outcome. */
@@ -260,30 +275,44 @@ export function callUsages(entries: UsageEntry[]): CallUsage[] {
 }
 
 /**
+ * Sum a running accumulator (or `undefined` to start) plus one call's usage. The
+ * optional cache subtotals are summed too and kept only when non-zero — the same
+ * "present only when reported" grain as {@link Usage}, so a cache-free run's
+ * aggregate stays `{inputTokens, outputTokens, totalTokens}`.
+ */
+function sumUsage(acc: Usage | undefined, add: Usage): Usage {
+  const cachedInputTokens =
+    (acc?.cachedInputTokens ?? 0) + (add.cachedInputTokens ?? 0);
+  const cacheCreationInputTokens =
+    (acc?.cacheCreationInputTokens ?? 0) + (add.cacheCreationInputTokens ?? 0);
+  return {
+    inputTokens: (acc?.inputTokens ?? 0) + add.inputTokens,
+    outputTokens: (acc?.outputTokens ?? 0) + add.outputTokens,
+    totalTokens: (acc?.totalTokens ?? 0) + add.totalTokens,
+    ...(cachedInputTokens > 0 ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
+  };
+}
+
+/**
  * Sum per-call usages into a {@link CombineUsage}: the overall `total`, the
- * per-participant `byParticipant` breakdown, and the per-call `calls` ledger.
- * Entries with no usage are ignored for `total`/`byParticipant`; `calls` holds only
- * the priceable entries (see {@link callUsages}). Returns `undefined` if no call
- * reported any usage at all.
+ * per-participant `byParticipant` breakdown, and the per-call `calls` ledger. Cache
+ * subtotals are carried through {@link sumUsage} (so `total`/`byParticipant` expose
+ * the same cache fields as each call). Entries with no usage are ignored for
+ * `total`/`byParticipant`; `calls` holds only the priceable entries (see
+ * {@link callUsages}). Returns `undefined` if no call reported any usage at all.
  */
 export function aggregateUsage(
   entries: UsageEntry[],
 ): CombineUsage | undefined {
   const byParticipant: Partial<Record<string, Usage>> = {};
-  const total: Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  let total: Usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   for (const { id, usage } of entries) {
     if (usage === undefined) {
       continue;
     }
-    total.inputTokens += usage.inputTokens;
-    total.outputTokens += usage.outputTokens;
-    total.totalTokens += usage.totalTokens;
-    const acc = byParticipant[id];
-    byParticipant[id] = {
-      inputTokens: (acc?.inputTokens ?? 0) + usage.inputTokens,
-      outputTokens: (acc?.outputTokens ?? 0) + usage.outputTokens,
-      totalTokens: (acc?.totalTokens ?? 0) + usage.totalTokens,
-    };
+    total = sumUsage(total, usage);
+    byParticipant[id] = sumUsage(byParticipant[id], usage);
   }
   // byParticipant is non-empty iff at least one entry carried usage.
   return Object.keys(byParticipant).length === 0

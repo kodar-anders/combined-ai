@@ -589,16 +589,16 @@ Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 
 `complete()` resolves to a `CompletionResult`:
 
-| Field             | Type           | Notes                                                                                              |
-| ----------------- | -------------- | -------------------------------------------------------------------------------------------------- |
-| `text`            | `string`       | The full answer.                                                                                   |
-| `model`           | `string`       | The model that actually produced the response.                                                     |
-| `finishReason`    | `FinishReason` | Normalized stop reason: `"stop"` \| `"length"` \| `"content_filter"` \| `"tool_use"` \| `"other"`. |
-| `rawFinishReason` | `string`       | The provider's exact stop-reason string.                                                           |
-| `refusal`         | `string`       | The refusal message when the model declined.                                                       |
-| `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`), or `undefined` if none reported.         |
-| `parsed`          | `unknown`      | The parsed structured output when `responseFormat` was given.                                      |
-| `toolCalls`       | `ToolCall[]`   | The tool calls the model requested, when it called any.                                            |
+| Field             | Type           | Notes                                                                                                                                                    |
+| ----------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `text`            | `string`       | The full answer.                                                                                                                                         |
+| `model`           | `string`       | The model that actually produced the response.                                                                                                           |
+| `finishReason`    | `FinishReason` | Normalized stop reason: `"stop"` \| `"length"` \| `"content_filter"` \| `"tool_use"` \| `"other"`.                                                       |
+| `rawFinishReason` | `string`       | The provider's exact stop-reason string.                                                                                                                 |
+| `refusal`         | `string`       | The refusal message when the model declined.                                                                                                             |
+| `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`, plus optional `cachedInputTokens`/`cacheCreationInputTokens`), or `undefined` if none reported. |
+| `parsed`          | `unknown`      | The parsed structured output when `responseFormat` was given.                                                                                            |
+| `toolCalls`       | `ToolCall[]`   | The tool calls the model requested, when it called any.                                                                                                  |
 
 `finishReason` lets you tell a truncated/refused answer apart from a genuinely
 empty one instead of just seeing `text: ""`. A `"length"` reason with empty
@@ -638,6 +638,42 @@ is the same calculation from a raw `Usage` + model id.
 The registry resolves dated snapshots and Gemini `modelVersion` strings to their
 base entry (e.g. `gpt-4.1-2025-04-14` → `gpt-4.1`), and bills Gemini thinking
 tokens at the output rate. Costs are raw floating-point USD — round at display.
+
+**Prompt caching** is reflected in dollars too. `usage.inputTokens` is the total
+billable prompt; `cachedInputTokens` (a discounted cache read) and
+`cacheCreationInputTokens` (an Anthropic cache write, billed at a premium) are
+subsets of it, set only when the provider reports them — Anthropic
+(`cache_read`/`cache_creation`), OpenAI (`cached_tokens`), and Gemini 2.5
+(`cachedContentTokenCount`). `costOf` bills reads at `cachedInputPerMTok` and
+writes at `cacheWriteInputPerMTok`, each falling back to the normal input rate
+when a model lists no cache rate (Anthropic and Gemini rates are built in; OpenAI
+falls back until added — supply it via `options.models`). Reporting is
+`complete()`-only (streaming reports no usage).
+
+To **enable** caching: OpenAI and Gemini 2.5 cache automatically, so reporting
+just works. Anthropic is manual — mark a cache breakpoint with `cacheControl` on a
+content part or on the system prompt's object form (Anthropic caches the prefix up
+to the marker and re-uses it at ~90% off on later requests with the same prefix):
+
+```ts
+await registry.select("anthropic").complete({
+  system: { text: bigStableInstructions, cacheControl: {} }, // 5-min cache
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: bigSharedContext, cacheControl: { ttl: "1h" } },
+        { type: "text", text: "What changed since yesterday?" }, // varies — after the breakpoint
+      ],
+    },
+  ],
+});
+```
+
+Omit `ttl` for the default 5-minute cache; `"1h"` opts into the 1-hour cache (the
+1-hour beta header is sent automatically). At most 4 breakpoints per request.
+OpenAI and Gemini ignore the marker; `combine` ignores it (its strategies build
+their own prompts).
 
 **Prices are best-effort and hand-maintained** (a small table of the most common
 models across the three providers, not an exhaustive catalog), dated by
@@ -934,7 +970,6 @@ cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
 Planned, roughly in priority order (subject to change):
 
-- **Prompt caching** — surface provider-native prompt caching and cached-token usage, with cached reads priced at the discounted rate in `costOf`.
 - **Test utilities** — a public `MockProvider` with simulated streaming.
 - **Fallback chains** — try the next provider on failure.
 - **Per-request retry & timeout** overrides.

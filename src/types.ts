@@ -7,8 +7,28 @@
 
 export type Role = "user" | "assistant";
 
+/**
+ * A provider-native prompt-cache marker (**Anthropic only**). Attach it to a
+ * content part (text/image/file) or the system prompt to place a cache breakpoint
+ * there: Anthropic caches the prompt prefix up to and including the marked block
+ * and re-uses it at a steep discount on later requests that share the same prefix.
+ *
+ * Omit `ttl` for the default 5-minute ephemeral cache; `"1h"` opts into the 1-hour
+ * cache (a higher write premium — sent via Anthropic's extended-cache beta header).
+ * Anthropic allows at most 4 breakpoints per request (the provider throws if more
+ * are marked). OpenAI ignores it (it caches automatically); Gemini ignores it (it
+ * has no per-request breakpoints — implicit caching is automatic); `combine`
+ * ignores it (its strategies build their own prompts).
+ */
+export type CacheControl = { ttl?: "1h" };
+
 /** A text segment of a message's content. */
-export type TextPart = { type: "text"; text: string };
+export type TextPart = {
+  type: "text";
+  text: string;
+  /** Mark a prompt-cache breakpoint at this block (Anthropic only; see {@link CacheControl}). */
+  cacheControl?: CacheControl;
+};
 
 /**
  * Where binary media (an image or document) comes from — either inline
@@ -21,7 +41,12 @@ export type MediaSource =
   | { kind: "url"; url: string; mediaType?: string };
 
 /** An image input (PNG/JPEG/WebP/GIF, per the provider's support). */
-export type ImagePart = { type: "image"; source: MediaSource };
+export type ImagePart = {
+  type: "image";
+  source: MediaSource;
+  /** Mark a prompt-cache breakpoint at this block (Anthropic only; see {@link CacheControl}). */
+  cacheControl?: CacheControl;
+};
 
 /** A document input, e.g. a PDF (`source.mediaType` should be `"application/pdf"`). */
 export type FilePart = {
@@ -29,6 +54,8 @@ export type FilePart = {
   source: MediaSource;
   /** Optional file name (used by OpenAI's file input). */
   filename?: string;
+  /** Mark a prompt-cache breakpoint at this block (Anthropic only; see {@link CacheControl}). */
+  cacheControl?: CacheControl;
 };
 
 /**
@@ -151,10 +178,22 @@ export type ToolCall = {
   input: Record<string, unknown>;
 };
 
+/**
+ * The object form of {@link CompletionRequest.system}: the prompt text plus an
+ * optional {@link CacheControl} marker. Use it to cache the system prompt — often
+ * the largest stable prefix of a request. `cacheControl` is honored by Anthropic
+ * and ignored by OpenAI/Gemini (which read only `text`).
+ */
+export type SystemPrompt = { text: string; cacheControl?: CacheControl };
+
 export type CompletionRequest = {
   messages: Message[];
-  /** Optional system prompt applied to the whole request. */
-  system?: string;
+  /**
+   * Optional system prompt applied to the whole request. A bare `string`, or a
+   * {@link SystemPrompt} object (`{ text, cacheControl }`) to mark the system
+   * prompt as an Anthropic cache breakpoint.
+   */
+  system?: string | SystemPrompt;
   /** Override the provider's default model. */
   model?: string;
   /** Override the provider's default output-token cap. */
@@ -203,14 +242,36 @@ export type FinishReason =
   | "other";
 
 /**
- * Token usage for a single completion. `totalTokens` is the provider's own total
- * when it reports one (Gemini's includes thinking tokens, so it can exceed
- * input + output), otherwise `inputTokens + outputTokens`.
+ * Token usage for a single completion.
+ *
+ * `inputTokens` is the **total billable prompt tokens**, including any prompt-cache
+ * reads and writes — a superset, normalized across providers so a single cost
+ * formula works. (Anthropic reports cache tokens in separate buckets *outside*
+ * `input_tokens`; OpenAI/Gemini fold them into their prompt count. Both are
+ * normalized to this shape, with the cache counts below as subsets of `inputTokens`.)
+ *
+ * `totalTokens` is the provider's own total when it reports one (Gemini's includes
+ * thinking tokens, so it can exceed input + output), otherwise
+ * `inputTokens + outputTokens`.
  */
 export type Usage = {
+  /** Total billable prompt tokens, including any cache reads/writes. */
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /**
+   * The subset of `inputTokens` served from a prompt cache (a discounted read).
+   * Set only when the provider reports a non-zero cached-read count (Anthropic
+   * `cache_read_input_tokens`, OpenAI `cached_tokens`, Gemini
+   * `cachedContentTokenCount`); omitted otherwise.
+   */
+  cachedInputTokens?: number;
+  /**
+   * The subset of `inputTokens` written to the cache this call, billed at a write
+   * premium. Currently Anthropic only (`cache_creation_input_tokens`); omitted
+   * when the provider has no separate cache-write charge or reported none.
+   */
+  cacheCreationInputTokens?: number;
 };
 
 export type CompletionResult = {
