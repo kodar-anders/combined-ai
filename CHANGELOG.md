@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-25
+
 ### Added
 
 - **Prompt-cache breakpoints (Anthropic)** (`src/types.ts`, `src/providers/anthropic.ts`):
@@ -70,6 +72,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   reads/writes, which Anthropic reports in buckets outside `input_tokens`). Unchanged for
   non-cached calls; OpenAI/Gemini are unchanged (their prompt count already included cached
   tokens).
+
+### Security
+
+- Pin `undici` to `^6.27.0` via `resolutions` to clear four Dependabot advisories
+  (1 high, 1 moderate, 2 low). It is a dev/build-only transitive dependency
+  (`fsevents` → `node-gyp`) — the published library uses the global `fetch` and never
+  imports `undici`.
 
 ## [0.2.0] - 2026-06-18
 
