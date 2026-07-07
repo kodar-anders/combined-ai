@@ -520,7 +520,7 @@ new ProviderRegistry({
   },
   openai: {
     apiKey: "sk-...",
-    model: "gpt-4.1", // optional; default
+    model: "gpt-5.4", // optional; default
     headers: { "x-trace": "..." }, // optional; merged into every request
   },
   google: {

@@ -14,18 +14,18 @@
  * without waiting for a release. See {@link PRICING_VERIFIED_ON} for when these
  * numbers were last checked.
  *
- * Prices verified 2026-06-25 against:
+ * Prices verified 2026-07-07 against:
  * - Anthropic: https://platform.claude.com/docs/en/pricing
  * - OpenAI:    https://developers.openai.com/api/docs/pricing
  * - Google:    https://ai.google.dev/gemini-api/docs/pricing
  *
  * Prompt-cache rates: Anthropic's (read 0.1× input; write 1.25× input = the 5-minute
  * TTL rate, so 1-hour writes under-bill) and Gemini's (read 0.1× input, tiered for
- * 2.5 Pro) are carried. OpenAI cache-read rates are left unset — the current pricing
- * page lists only the gpt-5.x generation, not the gpt-4.x models in this table, so
- * they couldn't be verified; the cost helpers fall back to the full input rate
- * (never a fabricated discount), keeping the "a wrong price is worse than undefined"
- * stance until they're confirmed.
+ * the Pro models) are carried. OpenAI cache-read rates are carried for the gpt-5.x
+ * models (the pricing page publishes them) but left unset on the older gpt-4.x rows —
+ * the page no longer lists those models, so their rates can't be verified; the cost
+ * helpers then fall back to the full input rate (never a fabricated discount), keeping
+ * the "a wrong price is worse than undefined" stance.
  */
 
 /** USD price per 1,000,000 tokens — the unit every provider publishes. */
@@ -90,7 +90,7 @@ export type CostOptions = {
  * The date the {@link MODELS} prices were last verified, as an ISO `YYYY-MM-DD`
  * string. Exposed so callers can reason about staleness programmatically.
  */
-export const PRICING_VERIFIED_ON = "2026-06-25";
+export const PRICING_VERIFIED_ON = "2026-07-07";
 
 /**
  * The built-in pricing table — the most commonly used models across the three
@@ -123,6 +123,20 @@ const MODELS: Record<string, ModelPricing> = {
     cachedInputPerMTok: 0.5,
     cacheWriteInputPerMTok: 6.25,
   },
+  "claude-opus-4-6": {
+    inputPerMTok: 5,
+    outputPerMTok: 25,
+    cachedInputPerMTok: 0.5,
+    cacheWriteInputPerMTok: 6.25,
+  },
+  // Sonnet 5 is the balanced tier of the Claude 5 family (Opus stayed on 4.x).
+  // Standard rate; intro pricing ($2/$10) applied through 2026-08-31.
+  "claude-sonnet-5": {
+    inputPerMTok: 3,
+    outputPerMTok: 15,
+    cachedInputPerMTok: 0.3,
+    cacheWriteInputPerMTok: 3.75,
+  },
   "claude-sonnet-4-6": {
     inputPerMTok: 3,
     outputPerMTok: 15,
@@ -135,13 +149,41 @@ const MODELS: Record<string, ModelPricing> = {
     cachedInputPerMTok: 0.1,
     cacheWriteInputPerMTok: 1.25,
   },
-  // OpenAI
+  // OpenAI. Cache read carried for gpt-5.x (published on the pricing page); no
+  // separate cache-write charge (caching is automatic). Older gpt-4.x rows omit
+  // cachedInputPerMTok — those rates aren't on the page (see header note).
+  "gpt-5.5": { inputPerMTok: 5, outputPerMTok: 30, cachedInputPerMTok: 0.5 },
+  "gpt-5.4": { inputPerMTok: 2.5, outputPerMTok: 15, cachedInputPerMTok: 0.25 },
+  "gpt-5.4-mini": {
+    inputPerMTok: 0.75,
+    outputPerMTok: 4.5,
+    cachedInputPerMTok: 0.075,
+  },
+  "gpt-5.4-nano": {
+    inputPerMTok: 0.2,
+    outputPerMTok: 1.25,
+    cachedInputPerMTok: 0.02,
+  },
   "gpt-4o": { inputPerMTok: 2.5, outputPerMTok: 10 },
   "gpt-4o-mini": { inputPerMTok: 0.15, outputPerMTok: 0.6 },
   "gpt-4.1": { inputPerMTok: 2, outputPerMTok: 8 },
   "gpt-4.1-mini": { inputPerMTok: 0.4, outputPerMTok: 1.6 },
   "gpt-4.1-nano": { inputPerMTok: 0.1, outputPerMTok: 0.4 },
-  // Google (Gemini)
+  // OpenAI reasoning (o-series). No verified cache-read rate on the pricing page,
+  // so cachedInputPerMTok stays unset (falls back to the full input rate).
+  o3: { inputPerMTok: 2, outputPerMTok: 8 },
+  "o4-mini": { inputPerMTok: 0.55, outputPerMTok: 2.2 },
+  // Google (Gemini). Cache read = 0.1× input (tiered for the Pro models).
+  "gemini-3.5-flash": {
+    inputPerMTok: 1.5,
+    outputPerMTok: 9,
+    cachedInputPerMTok: 0.15,
+  },
+  "gemini-3.1-flash-lite": {
+    inputPerMTok: 0.25,
+    outputPerMTok: 1.5,
+    cachedInputPerMTok: 0.025,
+  },
   "gemini-2.5-pro": {
     inputPerMTok: 1.25,
     outputPerMTok: 10,

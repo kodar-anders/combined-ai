@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Current-generation models in the pricing table** (`src/models.ts`): added Anthropic
+  `claude-sonnet-5` (standard $3/$15 rate) and `claude-opus-4-6`; OpenAI `gpt-5.5`,
+  `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` (with published cache-read rates) and the
+  `o3` / `o4-mini` reasoning models; and Google `gemini-3.5-flash` and
+  `gemini-3.1-flash-lite`. Existing `gpt-4o`/`gpt-4.1`/`gemini-2.5-*` entries are retained
+  (still valid, just aging). Prices re-verified 2026-07-07 (`PRICING_VERIFIED_ON`).
+
+### Changed
+
+- **OpenAI default model** (`src/providers/openai.ts`): `gpt-4.1` → `gpt-5.4`. `gpt-4.1` is
+  now grandfathered legacy (dropped from OpenAI's pricing page); `gpt-5.4` is the
+  current-generation successor in the same balanced-workhorse role ($2.50/$15), not the
+  pricier `gpt-5.5` flagship. Anthropic (`claude-opus-4-8`) and Google (`gemini-2.5-pro`)
+  defaults are unchanged — the former is still the current flagship Opus, and the latter
+  is still the most capable GA Gemini (the Gen-3 Pro tier is preview-only).
+
 ## [0.3.0] - 2026-06-25
 
 ### Added
