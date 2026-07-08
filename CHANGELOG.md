@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-08
+
 ### Added
 
 - **`MockProvider` on the `combined-ai/test` subpath** (`src/testing/`): a network-free
