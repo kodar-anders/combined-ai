@@ -56,6 +56,25 @@ export class ProviderError extends Error {
 }
 
 /**
+ * Build a `transport` {@link ProviderError} from a rejected request (a network/DNS
+ * failure or an aborted signal). Derives the message from `cause` and carries it
+ * through, so the caller always gets provider context. The single source of the
+ * transport-error shape — both the `fetch` wrapper and the test `MockProvider`
+ * throw through here.
+ */
+export function transportError(
+  provider: ProviderName,
+  cause: unknown,
+): ProviderError {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  return new ProviderError(`${provider} request failed: ${reason}`, {
+    provider,
+    kind: "transport",
+    cause,
+  });
+}
+
+/**
  * Build an `api` {@link ProviderError} from a non-2xx response, parsing the
  * provider's error body for a machine `code`/`type` where present.
  */

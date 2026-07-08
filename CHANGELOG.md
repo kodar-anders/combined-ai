@@ -9,6 +9,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **`MockProvider` on the `combined-ai/test` subpath** (`src/testing/`): a network-free
+  `Provider` for tests — canned/scripted/responder-driven completions, simulated stream
+  deltas (lossless text split), call recording (`calls` + `reset()`), abort handling
+  (transport `ProviderError`), and opt-in embeddings. Register it as a custom provider to
+  drive `select()`/`combine` without (paid) API calls. The subpath also re-exports
+  `ProviderError` so `instanceof` holds across the bundle boundary. New build entry;
+  main-entry exports unchanged.
+
 - **Current-generation models in the pricing table** (`src/models.ts`): added Anthropic
   `claude-sonnet-5` (standard $3/$15 rate) and `claude-opus-4-6`; OpenAI `gpt-5.5`,
   `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` (with published cache-read rates) and the

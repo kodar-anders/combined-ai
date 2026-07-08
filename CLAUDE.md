@@ -12,7 +12,7 @@
 
 ## What this is
 
-A **plain TypeScript library** that combines several AI providers into one package — pick one provider for a prompt, or combine many via a strategy. `src/index.ts` is the only public entry point; re-export the public API there (provider classes stay internal). Three providers: Anthropic, OpenAI, Google. The `"google"` provider speaks the **Gemini** API — registry key/`name` is `"google"` (the company, like `anthropic`/`openai`); internal `toGemini*` helpers and the `gemini-2.5-pro` default keep the Gemini name (the API it talks to).
+A **plain TypeScript library** that combines several AI providers into one package — pick one provider for a prompt, or combine many via a strategy. `src/index.ts` is the main public entry point; re-export the public API there (provider classes stay internal). A second `combined-ai/test` subpath entry (`src/testing/index.ts`) exports the network-free `MockProvider` (+ re-exports `ProviderError` so `instanceof` holds across the separately-bundled entry) — kept off the main entry so it never lands in a production bundle. Three providers: Anthropic, OpenAI, Google. The `"google"` provider speaks the **Gemini** API — registry key/`name` is `"google"` (the company, like `anthropic`/`openai`); internal `toGemini*` helpers and the `gemini-2.5-pro` default keep the Gemini name (the API it talks to).
 
 ## Core contracts — `src/types.ts`
 
@@ -28,7 +28,7 @@ The provider-agnostic contract: `Message`, `CompletionRequest`, `CompletionResul
 
 ## Errors & transport
 
-- `src/errors.ts` — error vocabulary. `ProviderError` (exported), `kind`: `"api"` (non-2xx → `status` set, via `apiError`) | `"transport"` (`fetch` rejected → `cause` set). `apiErrorFromBody` handles a 2xx body carrying `{error}` (so it throws instead of returning `text:""`). **Imports `ProviderName` from `./registry` type-only** (no runtime cycle — keep it that way). Mid-stream SSE errors stay plain `Error`. Also `aggregateError(message, causes)` (→ `AggregateError` or plain `Error`); combine's `noResultError` adapts it. No fetch/transport code here.
+- `src/errors.ts` — error vocabulary. `ProviderError` (exported), `kind`: `"api"` (non-2xx → `status` set, via `apiError`) | `"transport"` (`fetch` rejected / signal aborted → `cause` set, via `transportError` — the one place the transport-error shape lives; `transport.ts` and the test `MockProvider` both throw through it). `apiErrorFromBody` handles a 2xx body carrying `{error}` (so it throws instead of returning `text:""`). **Imports `ProviderName` from `./registry` type-only** (no runtime cycle — keep it that way). Mid-stream SSE errors stay plain `Error`. Also `aggregateError(message, causes)` (→ `AggregateError` or plain `Error`); combine's `noResultError` adapts it. No fetch/transport code here.
 - `src/transport.ts` — `requestWithRetry(provider, input, init, retry?)`: bounded exponential backoff on 429/503/529, honors `Retry-After` (capped 60s), aborts early on `signal`. **Transport rejections aren't retried.** Config via per-provider `retry?: RetryOptions` (`{maxRetries?, baseDelayMs?}`, defaults 2/500ms, `0` disables). Per-`complete()` call, so combine benefits transparently.
 
 ## Cost & pricing — `src/models.ts` + `src/cost.ts`
@@ -82,13 +82,13 @@ Make multiple providers cooperate on one prompt via a selectable strategy. **One
 
 ## Tests
 
-- Colocated `__tests__/` per source folder: `src/providers/__tests__/`, `src/combine/__tests__/`, `src/__tests__/` (registry, transport). Import via `../<file>` / `../../<file>`.
+- Colocated `__tests__/` per source folder: `src/providers/__tests__/`, `src/combine/__tests__/`, `src/testing/__tests__/` (MockProvider), `src/__tests__/` (registry, transport). Import via `../<file>` / `../../<file>`.
 - Each provider has `<provider>.test.ts` (mocked) + `<provider>.integration.test.ts` (live, opt-in — keep the suffix so the `test:integration` filter matches).
 - Combine unit tests use network-free fake `Provider`s (no `fetch` mock); registry-level `combine()` validation lives in `src/__tests__/registry.test.ts`.
 
 ## Commands
 
-- `yarn build` — tsup bundles `src/index.ts` to dual ESM+CJS with declarations + sourcemaps.
+- `yarn build` — tsup bundles both entries (`src/index.ts` + `src/testing/index.ts`, common base `src/` → `dist/testing/*`) to dual ESM+CJS with declarations + sourcemaps. **CLI multi-entry on purpose — no `tsup.config.ts`** (a root config `.ts` is outside tsconfig `include` and trips typed-lint's `projectService`, failing `yarn lint`/CI publish).
 - `yarn typecheck` — `tsc --noEmit` (type-check only; tsup owns the build).
 - `yarn test` — Jest. Single: `yarn test <pattern>` or `-t "<name>"`. `yarn test:watch`.
 - `yarn test:integration` — **live, paid** tests. Double-gated per provider: needs `RUN_LIVE_TESTS=1` (the script sets it) + that provider's key (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`), else `describe.skip`. Cheap models (`claude-haiku-4-5`/`gpt-4.1-mini`/`gemini-2.5-flash`), small `maxTokens` (Gemini bigger for thinking tokens). Append a filename pattern to narrow (replaces the default). Env loads from a gitignored `.env` via `jest.setup.cjs`/dotenv (copy `.env.example`). **Only tests read env — the library never does.**

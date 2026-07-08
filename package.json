@@ -36,6 +36,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./test": {
+      "import": {
+        "types": "./dist/testing/index.d.ts",
+        "default": "./dist/testing/index.js"
+      },
+      "require": {
+        "types": "./dist/testing/index.d.cts",
+        "default": "./dist/testing/index.cjs"
+      }
     }
   },
   "files": [
@@ -43,7 +53,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean --treeshake",
+    "build": "tsup src/index.ts src/testing/index.ts --format esm,cjs --dts --sourcemap --clean --treeshake",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",

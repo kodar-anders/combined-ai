@@ -5,7 +5,7 @@
  * `./errors`; this module is about how a request is made.
  */
 
-import { ProviderError } from "./errors";
+import { transportError } from "./errors";
 import { type ProviderName } from "./registry";
 
 /**
@@ -21,12 +21,7 @@ async function providerFetch(
   try {
     return await fetch(input, init);
   } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    throw new ProviderError(`${provider} request failed: ${reason}`, {
-      provider,
-      kind: "transport",
-      cause,
-    });
+    throw transportError(provider, cause);
   }
 }
 
