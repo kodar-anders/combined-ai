@@ -91,11 +91,24 @@ export default tseslint.config(
       // --- Unicorn: relax the noisy/opinionated rules ---
       "unicorn/switch-case-braces": ["error", "avoid"], // omit braces for single-statement cases
       "unicorn/prevent-abbreviations": "off", // too aggressive on common short names
+      "unicorn/name-replacements": "off", // same as prevent-abbreviations: `args`/`fn`/`e` are fine
       "unicorn/no-null": "off", // `null` is a legitimate value
       "unicorn/catch-error-name": "off",
       "unicorn/filename-case": "off",
       "unicorn/no-array-reduce": "off",
       "unicorn/numeric-separators-style": "off",
+      "unicorn/consistent-boolean-name": "off", // don't force is/has-prefixed boolean names
+      "unicorn/consistent-conditional-object-spread": "off", // ternary-with-{} spread is clear; not worth the `&&` churn
+      "unicorn/consistent-class-member-order": "off", // public `name` intentionally leads the provider classes
+      "unicorn/no-negated-array-predicate": "off", // `!x.some(p)` reads fine
+      "unicorn/prefer-continue": "off", // early-continue would force negating compound conditions
+      "unicorn/no-break-in-nested-loop": "off", // don't extract a helper just to avoid a simple `continue`
+      "unicorn/max-nested-calls": "off", // call-nesting depth isn't worth policing
+      "unicorn/no-unreadable-for-of-expression": "off", // inline `.slice()`/`.stream()` in a for-of header reads fine
+      "unicorn/prefer-global-number-constants": "off", // keep explicit `Number.POSITIVE_INFINITY`
+      // ES2022 lib target — these prefer methods that aren't available yet:
+      "unicorn/prefer-array-from-async": "off", // `Array.fromAsync` is ES2024
+      "unicorn/prefer-iterator-to-array": "off", // `Iterator#toArray` is ES2025
     },
   },
 
@@ -115,6 +128,12 @@ export default tseslint.config(
       "@typescript-eslint/explicit-function-return-type": "off",
       "@typescript-eslint/explicit-module-boundary-types": "off",
       "unicorn/consistent-function-scoping": "off",
+      // Kept on for src, off for idiomatic test patterns:
+      "unicorn/no-global-object-property-assignment": "off", // `globalThis.fetch = mock`
+      "unicorn/no-unnecessary-global-this": "off", // `globalThis.fetch` when saving/restoring it
+      "unicorn/prefer-await": "off", // `.catch((e) => e)` to capture a rejection for assertions
+      "unicorn/no-return-array-push": "off", // `(e) => arr.push(e)` collectors whose return is ignored
+      "unicorn/no-duplicate-loops": "off", // `for (const x of arr.filter(...))` in assertions
       "jest/consistent-test-it": ["warn", { fn: "it", withinDescribe: "it" }],
     },
   },

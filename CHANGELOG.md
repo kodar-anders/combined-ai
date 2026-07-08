@@ -33,6 +33,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   defaults are unchanged — the former is still the current flagship Opus, and the latter
   is still the most capable GA Gemini (the Gen-3 Pro tier is preview-only).
 
+- **Dev tooling (no runtime/API impact)**: bumped dev dependencies within range
+  (`eslint`, `typescript-eslint`, `prettier`, `@swc/core`, `eslint-plugin-jest`,
+  `globals`) and `eslint-plugin-unicorn` 65 → 71. The unicorn major surfaced several
+  new rules; the genuinely useful ones were adopted (a `Number.isSafeInteger` count
+  check, a redundant-`else` cleanup) and the opinionated/naming/ES2024+ ones were
+  disabled in `eslint.config.mjs` with rationale. `@types/node` and `typescript` were
+  held back (the latter is capped by `typescript-eslint`'s peer range).
+
 ## [0.3.0] - 2026-06-25
 
 ### Added

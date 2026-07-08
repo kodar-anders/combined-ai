@@ -173,7 +173,7 @@ export async function consensus(
           embedder,
           survivors.map((s) => ({ id: s.id, text: s.result.text })),
           request.signal,
-          // eslint-disable-next-line unicorn/no-useless-undefined -- a rejected comparison resolves to `undefined` (informational, must not break the run).
+          // eslint-disable-next-line unicorn/no-useless-undefined, unicorn/prefer-await -- a rejected comparison resolves to `undefined` (informational, must not break the run); the promise runs concurrently with critique/synth, so awaiting it here would serialize it.
         ).catch(() => undefined);
 
   // ── Phase 2: critiques (parallel fan-out over survivors) ──

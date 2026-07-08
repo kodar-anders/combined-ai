@@ -215,7 +215,7 @@ function stableKey(value: unknown): string {
     if (!isPlainObject(val)) {
       return val;
     }
-    // eslint-disable-next-line unicorn/no-array-sort -- toSorted() needs ES2023; the lib target is ES2022.
+    // eslint-disable-next-line unicorn/no-array-sort, unicorn/require-array-sort-compare -- toSorted() needs ES2023 (lib is ES2022); keys are strings, so the default lexicographic sort is intended.
     const sortedKeys = Object.keys(val).sort();
     return Object.fromEntries(sortedKeys.map((key) => [key, val[key]]));
   });

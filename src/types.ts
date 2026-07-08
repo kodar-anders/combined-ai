@@ -101,11 +101,7 @@ export type ToolResultPart = {
  * throws a clear error otherwise.
  */
 export type ContentPart =
-  | TextPart
-  | ImagePart
-  | FilePart
-  | ToolUsePart
-  | ToolResultPart;
+  TextPart | ImagePart | FilePart | ToolUsePart | ToolResultPart;
 
 export type Message = {
   role: Role;
@@ -235,11 +231,7 @@ export type CompletionRequest = {
  * - `"other"` — any other or unrecognized reason.
  */
 export type FinishReason =
-  | "stop"
-  | "length"
-  | "content_filter"
-  | "tool_use"
-  | "other";
+  "stop" | "length" | "content_filter" | "tool_use" | "other";
 
 /**
  * Token usage for a single completion.

@@ -327,10 +327,7 @@ export type BroadcastResult = {
  * `BroadcastResult` has no `text` (it returns every raw response, not one answer).
  */
 export type CombineResult =
-  | ConsensusResult
-  | PipelineResult
-  | EnsembleResult
-  | BroadcastResult;
+  ConsensusResult | PipelineResult | EnsembleResult | BroadcastResult;
 
 /**
  * Maps a strategy name to its request type — e.g. `StrategyRequest<"ensemble">`

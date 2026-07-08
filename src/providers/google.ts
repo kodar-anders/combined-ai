@@ -271,7 +271,6 @@ function toGeminiSchema(schema: unknown): unknown {
     if (key === "additionalProperties") {
       // Gemini's response_schema rejects this keyword with a 400 (the rest of
       // the cross-provider subset requires it for OpenAI strict mode). Drop it.
-      continue;
     } else if (key === "type" && typeof value === "string") {
       out[key] = value.toUpperCase();
     } else if (key === "properties" && isRecord(value)) {

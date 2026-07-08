@@ -84,8 +84,7 @@ export type CustomProviderInstance = {
 
 /** How a custom (non-built-in) provider is registered. */
 export type CustomProviderConfig =
-  | OpenAICompatibleConfig
-  | CustomProviderInstance;
+  OpenAICompatibleConfig | CustomProviderInstance;
 
 /** The names the library constructs as built-in providers (the single source of truth). */
 const BUILT_IN_NAMES = ["anthropic", "openai", "google"] as const;
@@ -113,8 +112,7 @@ export type ProviderRegistryConfig = {
  * custom string.
  */
 export type ProviderName =
-  | BuiltInProviderName
-  | (string & Record<never, never>);
+  BuiltInProviderName | (string & Record<never, never>);
 
 export class ProviderRegistry {
   readonly #providers = new Map<ProviderName, Provider>();
@@ -387,7 +385,7 @@ export class ProviderRegistry {
   #validateConsensusOptions(request: ConsensusRequest, ids: string[]): void {
     const { minParticipants } = request;
     if (minParticipants !== undefined) {
-      if (!Number.isInteger(minParticipants) || minParticipants < 1) {
+      if (!Number.isSafeInteger(minParticipants) || minParticipants < 1) {
         throw new Error("combine minParticipants must be a positive integer");
       }
       if (minParticipants > ids.length) {
@@ -480,7 +478,7 @@ function normalizeParticipant(
   }
   if (
     spec.maxTokens !== undefined &&
-    (!Number.isInteger(spec.maxTokens) || spec.maxTokens < 1)
+    (!Number.isSafeInteger(spec.maxTokens) || spec.maxTokens < 1)
   ) {
     throw new Error(
       `combine participant for "${spec.provider}" has an invalid maxTokens (${String(spec.maxTokens)}); must be a positive integer.`,
