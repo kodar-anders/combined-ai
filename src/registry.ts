@@ -33,6 +33,12 @@ import { ensemble as runEnsemble } from "./combine/ensemble";
 import { pipeline as runPipeline } from "./combine/pipeline";
 import { type RosterEntry } from "./combine/shared";
 import {
+  createFallbackProvider,
+  type FallbackEntry,
+  type FallbackOptions,
+  type FallbackSpec,
+} from "./fallback";
+import {
   AnthropicProvider,
   type AnthropicProviderOptions,
 } from "./providers/anthropic";
@@ -286,6 +292,43 @@ export class ProviderRegistry {
   }
 
   /**
+   * Build a {@link Provider} that tries the given providers in order, falling back
+   * to the next when one throws a {@link ProviderError} (a provider being down,
+   * rate-limited past its retries, erroring, etc.). Pairs with the per-provider
+   * retry in `transport.ts` — each entry still retries routine statuses internally
+   * before the chain moves on.
+   *
+   * The returned provider is a plain {@link Provider}: call `complete()`/`stream()`
+   * on it directly, or register it as a `custom: { kind: "provider" }` entry. It has
+   * no `embed` (fallback is completion routing; cross-provider embeddings aren't
+   * comparable).
+   *
+   * A `specs` entry is a bare provider name (its default model) or
+   * `{ provider, model?, maxTokens? }` whose overrides beat the per-call request
+   * (entry → request → provider default) — set `model` per entry for a mixed chain,
+   * since one `request.model` can't be forwarded to every provider. By default it
+   * falls back on any non-abort `ProviderError`; narrow that with
+   * `options.shouldFallback` and observe advances with `options.onFallback`.
+   *
+   * @throws if `specs` is empty, or names a provider that isn't configured.
+   */
+  fallback(specs: FallbackSpec[], options?: FallbackOptions): Provider {
+    if (specs.length === 0) {
+      throw new Error("fallback requires at least one provider");
+    }
+    const entries: FallbackEntry[] = specs.map((spec) => {
+      const { providerName, model, maxTokens } = normalizeFallbackSpec(spec);
+      return {
+        providerName,
+        model,
+        maxTokens,
+        provider: this.select(providerName),
+      };
+    });
+    return createFallbackProvider(entries, options);
+  }
+
+  /**
    * Embed a single text with the named provider — sugar over {@link embedMany}
    * that returns the one vector. Throws if the provider isn't configured or
    * doesn't support embeddings.
@@ -491,6 +534,40 @@ function normalizeParticipant(
       : `${spec.provider}-${spec.model}`);
   return {
     id,
+    providerName: spec.provider,
+    model: spec.model,
+    maxTokens: spec.maxTokens,
+  };
+}
+
+/**
+ * Resolve a {@link FallbackSpec} to its provider name and per-entry overrides. A
+ * bare string uses the provider's default model; the object form's overrides are
+ * validated with the same falsy-guard as {@link normalizeParticipant} (an empty
+ * `model` would be sent to the API; a non-positive `maxTokens` would truncate).
+ */
+function normalizeFallbackSpec(spec: FallbackSpec): {
+  providerName: ProviderName;
+  model?: string;
+  maxTokens?: number;
+} {
+  if (typeof spec === "string") {
+    return { providerName: spec };
+  }
+  if (spec.model?.trim() === "") {
+    throw new Error(
+      `fallback entry for "${spec.provider}" has an empty model; omit \`model\` to use the default.`,
+    );
+  }
+  if (
+    spec.maxTokens !== undefined &&
+    (!Number.isSafeInteger(spec.maxTokens) || spec.maxTokens < 1)
+  ) {
+    throw new Error(
+      `fallback entry for "${spec.provider}" has an invalid maxTokens (${String(spec.maxTokens)}); must be a positive integer.`,
+    );
+  }
+  return {
     providerName: spec.provider,
     model: spec.model,
     maxTokens: spec.maxTokens,

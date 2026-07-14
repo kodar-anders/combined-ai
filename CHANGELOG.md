@@ -7,6 +7,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Single-provider fallback chains** (`src/fallback.ts`): `registry.fallback(specs, options?)`
+  returns a composable `Provider` that tries providers in order, catching a `ProviderError`
+  and moving to the next (pairs with — doesn't replace — the per-provider `transport.ts`
+  retry). A `spec` is a bare provider name or `{ provider, model?, maxTokens? }` whose
+  overrides beat the per-call request, so a mixed chain can name a model per provider. When
+  every provider fails it throws an `AggregateError` carrying each cause. `stream()` falls
+  back only before the first delta (once a delta is emitted the chain is committed). Aborting
+  the request's `signal` propagates without advancing the chain. `options.shouldFallback` and
+  `options.onFallback` (both take a `FallbackEvent`) narrow the permissive default and observe
+  advances. The returned provider has no `embed` (completion routing only). New exports:
+  `FallbackSpec`, `FallbackOptions`, `FallbackEvent`.
+
 ## [0.4.0] - 2026-07-08
 
 ### Added

@@ -37,6 +37,8 @@ export { cosineSimilarity } from "./embeddings";
 export { ProviderError, type ProviderErrorKind } from "./errors";
 export { type RetryOptions } from "./transport";
 
+export type { FallbackEvent, FallbackOptions, FallbackSpec } from "./fallback";
+
 export { costOf, costOfUsage, type CostBreakdown } from "./cost";
 export { combineCost, type CombineCost } from "./combine/cost";
 export {

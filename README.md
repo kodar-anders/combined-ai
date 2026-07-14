@@ -55,6 +55,7 @@ console.log(result.text);
   - [Multimodal input](#multimodal-input)
   - [Error handling](#error-handling)
   - [Retries & cancellation](#retries--cancellation)
+  - [Fallback chains](#fallback-chains)
 - [Testing](#testing)
 - [Public API](#public-api)
 - [Development](#development)
@@ -899,6 +900,57 @@ every participant call, so aborting it cancels the whole run.
 await provider.complete({ messages, signal: AbortSignal.timeout(30_000) });
 ```
 
+### Fallback chains
+
+`registry.fallback(specs)` returns a `Provider` that tries providers in order,
+catching a `ProviderError` and moving to the next when one is down, rate-limited
+past its retries, or otherwise failing. It pairs with the per-provider retry above
+(each entry still retries its routine statuses before the chain moves on) and, being
+a plain `Provider`, works via `.complete()`/`.stream()` and can even be registered as
+a [custom provider](#custom--gateway-providers).
+
+```ts
+const resilient = registry.fallback(["openai", "anthropic"]);
+const result = await resilient.complete({ messages }); // openai, then anthropic on failure
+```
+
+A `spec` is a bare provider name (its default model) or `{ provider, model?, maxTokens? }`.
+Per-entry `model`/`maxTokens` override the per-call request (entry → request → provider
+default). **For a mixed-provider chain, set `model` per entry — not on the request** — since
+one `request.model` can't be forwarded to a different provider:
+
+```ts
+registry.fallback([
+  { provider: "openai", model: "gpt-5.4" },
+  { provider: "anthropic", model: "claude-opus-4-8" },
+]);
+```
+
+When **every** provider fails, `fallback` throws an `AggregateError` whose `.errors`
+holds each `ProviderError`. Aborting the request's `signal` propagates immediately
+without trying the rest of the chain (the signal is a whole-chain budget). `stream()`
+falls back only **before the first delta** — once a delta is emitted the chain is
+committed to that provider and any later error propagates unchanged.
+
+By default it falls back on any non-abort `ProviderError`. Because a different provider
+may accept a request the first rejected (e.g. differing structured-output schema rules),
+even a `4xx` triggers fallback — so a genuinely unrecoverable error (a bad key, a
+malformed request) is only surfaced after the whole chain is exhausted. Pass
+`shouldFallback` to stop early on those, and `onFallback` to observe each advance:
+
+```ts
+registry.fallback(["openai", "anthropic"], {
+  shouldFallback: ({ error }) => error.status !== 401, // don't retry a bad key elsewhere
+  onFallback: ({ provider, error }) =>
+    console.warn(`${provider} failed (${error.status}), falling back`),
+});
+```
+
+> The returned provider has no `embed` — fallback is completion routing, and embeddings
+> from different providers/models aren't comparable. Note also that a fully-unavailable
+> chain serializes each provider's retry backoff, so worst-case failover latency grows
+> with the chain length.
+
 ## Testing
 
 A network-free `MockProvider` is published on the `combined-ai/test` subpath, so
@@ -956,8 +1008,8 @@ package's `exports` map).
 
 Exported from the package entry point:
 
-- `ProviderRegistry` — the single entry point: `select()`, the strategy
-  dispatcher `combine()`, the per-strategy methods `consensus()`,
+- `ProviderRegistry` — the single entry point: `select()`, `fallback()`, the
+  strategy dispatcher `combine()`, the per-strategy methods `consensus()`,
   `pipeline()`, `ensemble()`, `broadcast()`, and the embedding methods
   `embed()` / `embedMany()`.
 - Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
@@ -979,6 +1031,7 @@ Exported from the package entry point:
   `CombineBudget`, `CombineEmbedding`, `CombineEvent`, and the strategy-generic
   utilities `StrategyRequest<S>` / `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
+- Fallback types: `FallbackSpec`, `FallbackOptions`, `FallbackEvent`.
 - Cost & pricing: `costOf`, `costOfUsage`, `combineCost`, `findModel`, `listModels`,
   `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`, `CostOptions`,
   `ModelInfo`, `ModelPricing` (types).
@@ -1028,7 +1081,6 @@ cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
 Planned, roughly in priority order (subject to change):
 
-- **Fallback chains** — try the next provider on failure.
 - **Per-request retry & timeout** overrides.
 - **Token counting** before send.
 - **Streaming in `combine`** — incremental progress across phases.
