@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-15
+
 ### Added
 
 - **Per-request retry & timeout overrides**: `CompletionRequest` and `EmbeddingRequest` gained
