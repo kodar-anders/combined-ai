@@ -82,7 +82,16 @@ export async function apiError(
   provider: ProviderName,
   response: Response,
 ): Promise<ProviderError> {
-  const body = await response.text();
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    // The error body is read after the headers, so an abort/timeout (or a dropped
+    // connection) firing here escapes as a raw DOMException/TypeError unless wrapped
+    // — which would break fallback's ProviderError-based advancement. `text()` never
+    // parses, so every failure here is transport, not a body-format error.
+    return transportError(provider, cause);
+  }
   const { code, type } = parseErrorBody(body);
   return new ProviderError(
     `${provider} request failed (${String(response.status)}): ${body}`,

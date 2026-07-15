@@ -44,7 +44,7 @@ import {
 } from "./providers/anthropic";
 import { GoogleProvider, type GoogleProviderOptions } from "./providers/google";
 import { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
-import { type RetryOptions } from "./transport";
+import { assertValidTimeoutMs, type RetryOptions } from "./transport";
 import {
   type EmbeddingOptions,
   type EmbeddingResult,
@@ -401,6 +401,10 @@ export class ProviderRegistry {
         "combine does not support tool calling (tools/toolChoice); use registry.select() for a single-provider tool loop.",
       );
     }
+    // Validate `timeoutMs` up front: `completionFor` forwards it into every
+    // participant call, and each of those runs through `runOutcome`, which would
+    // otherwise catch the validation throw as N participant failures and bury it.
+    assertValidTimeoutMs(request.timeoutMs);
     const roster: RosterEntry[] = normalized.map((p) => ({
       ...p,
       provider: this.select(p.providerName),

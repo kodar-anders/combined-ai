@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import { ProviderError } from "../errors";
-import { requestWithRetry } from "../transport";
+import {
+  assertValidTimeoutMs,
+  mergeRetry,
+  readJsonBody,
+  requestControls,
+  requestWithRetry,
+} from "../transport";
 
 const originalFetch = globalThis.fetch;
 
@@ -175,5 +181,149 @@ describe("requestWithRetry", () => {
     expect(error).toBeInstanceOf(ProviderError);
     expect((error as ProviderError).kind).toBe("transport");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("mergeRetry", () => {
+  it("returns the provider retry when the request has none", () => {
+    expect(mergeRetry(undefined, { maxRetries: 3 })).toEqual({ maxRetries: 3 });
+  });
+
+  it("returns the request retry when the provider has none", () => {
+    expect(mergeRetry({ maxRetries: 1 }, undefined)).toEqual({ maxRetries: 1 });
+  });
+
+  it("returns undefined when neither is set", () => {
+    expect(mergeRetry(undefined, undefined)).toBeUndefined();
+  });
+
+  it("merges field-by-field with the request winning (explicit 0 disables)", () => {
+    expect(
+      mergeRetry({ maxRetries: 0 }, { maxRetries: 3, baseDelayMs: 100 }),
+    ).toEqual({ maxRetries: 0, baseDelayMs: 100 });
+  });
+});
+
+describe("assertValidTimeoutMs", () => {
+  it("accepts undefined and positive values", () => {
+    expect(() => assertValidTimeoutMs(undefined)).not.toThrow();
+    expect(() => assertValidTimeoutMs(1000)).not.toThrow();
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])(
+    "throws on %p",
+    (value) => {
+      expect(() => assertValidTimeoutMs(value)).toThrow(/timeoutMs/);
+    },
+  );
+});
+
+describe("requestControls", () => {
+  it("returns the caller's signal unchanged when no timeoutMs is set", () => {
+    const { signal } = new AbortController();
+    expect(requestControls({ signal }).signal).toBe(signal);
+  });
+
+  it("returns no signal when neither signal nor timeoutMs is set", () => {
+    expect(requestControls({}).signal).toBeUndefined();
+  });
+
+  it("creates a timeout signal that aborts with a TimeoutError", async () => {
+    const { signal } = requestControls({ timeoutMs: 5 });
+    if (signal === undefined) {
+      throw new Error("expected a timeout signal");
+    }
+    expect(signal.aborted).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(signal.aborted).toBe(true);
+    expect((signal.reason as Error).name).toBe("TimeoutError");
+  });
+
+  it("combines the caller's signal with the timeout (a caller abort keeps its reason)", () => {
+    const controller = new AbortController();
+    const { signal } = requestControls({
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    });
+    if (signal === undefined) {
+      throw new Error("expected a combined signal");
+    }
+    controller.abort(new Error("user cancelled"));
+    expect(signal.aborted).toBe(true);
+    expect((signal.reason as Error).message).toBe("user cancelled");
+  });
+
+  it("throws up front on an invalid timeoutMs", () => {
+    expect(() => requestControls({ timeoutMs: 0 })).toThrow(/timeoutMs/);
+  });
+
+  it("merges the per-request retry over the provider's", () => {
+    expect(
+      requestControls({ retry: { maxRetries: 5 } }, { baseDelayMs: 1000 })
+        .retry,
+    ).toEqual({ baseDelayMs: 1000, maxRetries: 5 });
+  });
+
+  it("times out a hung fetch as a transport ProviderError", async () => {
+    mockFetch(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const { signal } = init;
+          if (!signal) {
+            return;
+          }
+          signal.addEventListener("abort", () => {
+            reject(signal.reason as Error);
+          });
+        }),
+    );
+
+    const { signal, retry } = requestControls({ timeoutMs: 10 });
+    const error = await requestWithRetry(
+      "openai",
+      URL,
+      {
+        ...INIT,
+        signal,
+      },
+      retry,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).kind).toBe("transport");
+    expect(((error as ProviderError).cause as Error).name).toBe("TimeoutError");
+  });
+});
+
+describe("readJsonBody", () => {
+  it("returns the parsed body", async () => {
+    const res = {
+      json: () => Promise.resolve({ ok: true }),
+    } as unknown as Response;
+    await expect(readJsonBody("openai", res)).resolves.toEqual({ ok: true });
+  });
+
+  it("wraps an abort during the read as a transport ProviderError", async () => {
+    const abort = new DOMException("aborted", "AbortError");
+    const res = {
+      json: () => Promise.reject(abort),
+    } as unknown as Response;
+
+    const error = await readJsonBody("openai", res).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).kind).toBe("transport");
+    expect((error as ProviderError).cause).toBe(abort);
+  });
+
+  it("leaves a malformed-body SyntaxError raw", async () => {
+    const syntax = new SyntaxError("Unexpected token");
+    const res = {
+      json: () => Promise.reject(syntax),
+    } as unknown as Response;
+
+    const error = await readJsonBody("openai", res).catch((e: unknown) => e);
+
+    expect(error).toBe(syntax);
   });
 });

@@ -7,7 +7,12 @@ import { apiError, apiErrorFromBody } from "../errors";
 import { extractModel, isRecord } from "./extract";
 import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
-import { requestWithRetry, type RetryOptions } from "../transport";
+import {
+  readJsonBody,
+  requestControls,
+  requestWithRetry,
+  type RetryOptions,
+} from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -59,6 +64,7 @@ export class GoogleProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       "google",
       this.#url(model, false),
@@ -66,16 +72,16 @@ export class GoogleProvider implements Provider {
         method: "POST",
         headers: this.#headers(),
         body: JSON.stringify(this.#buildBody(request, DEFAULT_MAX_TOKENS)),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
       throw await apiError("google", response);
     }
 
-    const data: unknown = await response.json();
+    const data: unknown = await readJsonBody("google", response);
     if (isRecord(data) && isRecord(data.error)) {
       throw apiErrorFromBody("google", response.status, data);
     }
@@ -105,6 +111,7 @@ export class GoogleProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       "google",
       this.#url(model, true),
@@ -114,9 +121,9 @@ export class GoogleProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, DEFAULT_STREAM_MAX_TOKENS),
         ),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
@@ -126,7 +133,7 @@ export class GoogleProvider implements Provider {
       throw new Error("Google streaming response had no body");
     }
 
-    for await (const event of sseJson(response.body)) {
+    for await (const event of sseJson(response.body, "google")) {
       if (isRecord(event.error)) {
         throw new Error(`Google stream error: ${JSON.stringify(event)}`);
       }
@@ -142,6 +149,7 @@ export class GoogleProvider implements Provider {
     // Use :batchEmbedContents for every call (a single input is a batch of one),
     // keeping one code path. Each request entry repeats the model as a
     // `models/<id>` resource path, as the batch API requires.
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       "google",
       `${this.#baseUrl}/v1beta/models/${model}:batchEmbedContents`,
@@ -149,16 +157,16 @@ export class GoogleProvider implements Provider {
         method: "POST",
         headers: this.#headers(),
         body: JSON.stringify(toBatchEmbedBody(request, model)),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
       throw await apiError("google", response);
     }
 
-    const data: unknown = await response.json();
+    const data: unknown = await readJsonBody("google", response);
     if (isRecord(data) && isRecord(data.error)) {
       throw apiErrorFromBody("google", response.status, data);
     }

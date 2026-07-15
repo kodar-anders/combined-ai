@@ -118,6 +118,15 @@ export function completionFor(
   if (request.responseFormat !== undefined) {
     completion.responseFormat = request.responseFormat;
   }
+  // Forward the transport controls: `retry`/`timeoutMs` apply per participant call
+  // (each phase gets its own fresh timeout — the request-wide `signal` above is what
+  // bounds the whole combine run).
+  if (request.retry !== undefined) {
+    completion.retry = request.retry;
+  }
+  if (request.timeoutMs !== undefined) {
+    completion.timeoutMs = request.timeoutMs;
+  }
   return completion;
 }
 

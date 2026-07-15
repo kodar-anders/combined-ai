@@ -87,6 +87,11 @@ function wordChunks(text: string): string[] {
  * A configurable, network-free {@link Provider} for tests. Register it via
  * `custom: { name: { kind: "provider", provider } }` to drive `select()`/`combine`,
  * or use it directly. Records every call on {@link MockProvider.calls}.
+ *
+ * It honors only `request.signal` (abort). Being network-free, it ignores
+ * `request.retry` (nothing to retry) and `request.timeoutMs` (no real timer) — so it
+ * also won't reproduce a real provider's up-front throw on an invalid `timeoutMs`;
+ * exercise that against a provider that runs the transport path.
  */
 export class MockProvider implements Provider {
   readonly name: string;

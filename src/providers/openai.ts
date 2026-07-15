@@ -7,7 +7,12 @@ import { apiError, apiErrorFromBody } from "../errors";
 import { extractModel, isRecord } from "./extract";
 import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
-import { requestWithRetry, type RetryOptions } from "../transport";
+import {
+  readJsonBody,
+  requestControls,
+  requestWithRetry,
+  type RetryOptions,
+} from "../transport";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -77,6 +82,7 @@ export class OpenAIProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       this.name,
       `${this.#baseUrl}/v1/chat/completions`,
@@ -86,16 +92,16 @@ export class OpenAIProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
         ),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
       throw await apiError(this.name, response);
     }
 
-    const data: unknown = await response.json();
+    const data: unknown = await readJsonBody(this.name, response);
     if (isRecord(data) && isRecord(data.error)) {
       throw apiErrorFromBody(this.name, response.status, data);
     }
@@ -123,6 +129,7 @@ export class OpenAIProvider implements Provider {
     request: CompletionRequest,
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       this.name,
       `${this.#baseUrl}/v1/chat/completions`,
@@ -132,9 +139,9 @@ export class OpenAIProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
         ),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
@@ -144,7 +151,7 @@ export class OpenAIProvider implements Provider {
       throw new Error("OpenAI streaming response had no body");
     }
 
-    for await (const event of sseJson(response.body)) {
+    for await (const event of sseJson(response.body, this.name)) {
       if (isRecord(event.error)) {
         throw new Error(`OpenAI stream error: ${JSON.stringify(event)}`);
       }
@@ -163,6 +170,7 @@ export class OpenAIProvider implements Provider {
     if (request.dimensions !== undefined) {
       body.dimensions = request.dimensions;
     }
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       this.name,
       `${this.#baseUrl}/v1/embeddings`,
@@ -170,16 +178,16 @@ export class OpenAIProvider implements Provider {
         method: "POST",
         headers: this.#headers(),
         body: JSON.stringify(body),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
       throw await apiError(this.name, response);
     }
 
-    const data: unknown = await response.json();
+    const data: unknown = await readJsonBody(this.name, response);
     if (isRecord(data) && isRecord(data.error)) {
       throw apiErrorFromBody(this.name, response.status, data);
     }

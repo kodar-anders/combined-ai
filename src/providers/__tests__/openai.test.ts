@@ -800,3 +800,89 @@ describe("OpenAIProvider.stream", () => {
     await expect(run()).rejects.toThrow("openai request failed (429)");
   });
 });
+
+describe("OpenAIProvider per-request retry & timeout", () => {
+  it("lets a per-request retry override the construction-time retry", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: false,
+      status: 429,
+      headers: new Headers(),
+      text: () => Promise.resolve("rate limited"),
+    }));
+    const provider = new OpenAIProvider({
+      apiKey: "sk-test",
+      retry: { maxRetries: 5 },
+    });
+
+    const error = await provider
+      .complete({
+        messages: [{ role: "user", content: "Hi" }],
+        retry: { maxRetries: 0 },
+      })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    // The per-request maxRetries:0 disabled the construction-time 5 retries.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a hung complete() as a transport ProviderError", async () => {
+    mockFetch(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const { signal } = init;
+          if (!signal) {
+            return;
+          }
+          signal.addEventListener("abort", () => {
+            reject(signal.reason as Error);
+          });
+        }),
+    );
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+
+    const error = await provider
+      .complete({ messages: [{ role: "user", content: "Hi" }], timeoutMs: 10 })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).kind).toBe("transport");
+  });
+
+  it("times out a hung stream() body read as a transport ProviderError", async () => {
+    mockFetch((_url: string, init: RequestInit) => ({
+      ok: true,
+      body: new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise((_resolve, reject) => {
+            const { signal } = init;
+            if (!signal) {
+              return;
+            }
+            signal.addEventListener("abort", () => {
+              reject(signal.reason as Error);
+            });
+          });
+        },
+      }),
+    }));
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+
+    const deltas: string[] = [];
+    let error: unknown;
+    try {
+      for await (const delta of provider.stream({
+        messages: [{ role: "user", content: "Hi" }],
+        timeoutMs: 10,
+      })) {
+        deltas.push(delta);
+      }
+    } catch (e: unknown) {
+      error = e;
+    }
+
+    expect(deltas).toEqual([]);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).kind).toBe("transport");
+  });
+});

@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933.svg)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A520.3-339933.svg)](https://nodejs.org/)
 
 **Multi-model consensus, pipeline, ensemble, and broadcast for TypeScript.**
 
@@ -81,7 +81,8 @@ different providers, or the **same provider with different models**.
 
 ## Requirements
 
-- Node.js ≥ 20 (uses the global `fetch`, `ReadableStream`, `TextDecoder`).
+- Node.js ≥ 20.3 (uses the global `fetch`, `ReadableStream`, `TextDecoder`, and
+  `AbortSignal.any`).
 
 ## Installation
 
@@ -114,8 +115,9 @@ const result = await registry.combine({
 ```
 
 `combine()` accepts the same request fields as `complete()` (`messages`,
-`system`, `model`, `maxTokens`, `signal`) — they apply to every participant
-unless a participant overrides them — plus:
+`system`, `model`, `maxTokens`, `signal`, `retry`, `timeoutMs`) — they apply to
+every participant unless a participant overrides them (`retry`/`timeoutMs` apply
+per participant call; see [Retries & cancellation](#retries--cancellation)) — plus:
 
 | Field             | Type                                                           | Notes                                                                                      |
 | ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -571,16 +573,18 @@ throws at construction. Custom providers work everywhere a built-in does —
 
 Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 
-| Field            | Type               | Notes                                                                                          |
-| ---------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
-| `messages`       | `Message[]`        | Required. `{ role: "user" \| "assistant"; content: string \| ContentPart[] }`                  |
-| `system`         | `string`           | Optional system prompt.                                                                        |
-| `model`          | `string`           | Optional per-request model override.                                                           |
-| `maxTokens`      | `number`           | Optional output cap (defaults: 16000 complete / 64000 stream).                                 |
-| `responseFormat` | `ResponseFormat`   | Optional. Constrain the output to a JSON Schema — see [Structured output](#structured-output). |
-| `tools`          | `ToolDefinition[]` | Optional. Tools the model may call — see [Tool calling](#tool-calling).                        |
-| `toolChoice`     | `ToolChoice`       | Optional. `"auto" \| "any" \| "none" \| { name }`.                                             |
-| `signal`         | `AbortSignal`      | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                 |
+| Field            | Type               | Notes                                                                                            |
+| ---------------- | ------------------ | ------------------------------------------------------------------------------------------------ |
+| `messages`       | `Message[]`        | Required. `{ role: "user" \| "assistant"; content: string \| ContentPart[] }`                    |
+| `system`         | `string`           | Optional system prompt.                                                                          |
+| `model`          | `string`           | Optional per-request model override.                                                             |
+| `maxTokens`      | `number`           | Optional output cap (defaults: 16000 complete / 64000 stream).                                   |
+| `responseFormat` | `ResponseFormat`   | Optional. Constrain the output to a JSON Schema — see [Structured output](#structured-output).   |
+| `tools`          | `ToolDefinition[]` | Optional. Tools the model may call — see [Tool calling](#tool-calling).                          |
+| `toolChoice`     | `ToolChoice`       | Optional. `"auto" \| "any" \| "none" \| { name }`.                                               |
+| `signal`         | `AbortSignal`      | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                   |
+| `retry`          | `RetryOptions`     | Optional. Overrides the provider's construction-time retry for this call (merged field-wise).    |
+| `timeoutMs`      | `number`           | Optional. Whole-call wall-clock deadline — see [Retries & cancellation](#retries--cancellation). |
 
 > **Gemini note:** Gemini 2.5 models are _thinking_ models, and their internal
 > thinking tokens count against `maxTokens`. A very small cap can be consumed
@@ -890,15 +894,32 @@ new ProviderRegistry({
 });
 ```
 
-Pass a `signal` to bound or cancel a call. For a timeout use
-`AbortSignal.timeout(ms)`; to cancel manually use an `AbortController`. An aborted
-call rejects with a transport `ProviderError` whose `cause` is the abort reason.
-The backoff respects the signal too, and `combine()` threads one signal into
-every participant call, so aborting it cancels the whole run.
+Override the retry **per call** with `request.retry` — it merges field-by-field over
+the provider's, so you can tune one knob (and `{ maxRetries: 0 }` disables retry for
+just that call while keeping the provider's `baseDelayMs`):
 
 ```ts
-await provider.complete({ messages, signal: AbortSignal.timeout(30_000) });
+await provider.complete({ messages, retry: { maxRetries: 5 } });
 ```
+
+Pass a `signal` to bound or cancel a call, or set `timeoutMs` for a wall-clock
+deadline (sugar for combining your `signal` with `AbortSignal.timeout(ms)`). Both
+reject an expired/aborted call with a transport `ProviderError` whose `cause` is the
+abort reason — a `TimeoutError` for `timeoutMs`, so a timeout is distinguishable. A
+`timeoutMs` bounds the **whole call**: every retry attempt, the backoff between them,
+and (for `stream()`) the full body read.
+
+```ts
+await provider.complete({ messages, timeoutMs: 30_000 });
+// equivalent to: signal: AbortSignal.timeout(30_000)
+```
+
+`retry` and `timeoutMs` (like `signal`) flow through `combine()` and `fallback()` to
+every underlying provider call. Note the split: a `signal` bounds the **whole run**
+(one signal cancels a combine or a fallback chain), whereas `timeoutMs` bounds **each
+provider call** — in a multi-phase combine or a fallback chain the worst-case latency
+is roughly `calls × timeoutMs`, so use `signal` (e.g. `AbortSignal.timeout(ms)`) for a
+run-wide budget.
 
 ### Fallback chains
 
@@ -928,9 +949,11 @@ registry.fallback([
 
 When **every** provider fails, `fallback` throws an `AggregateError` whose `.errors`
 holds each `ProviderError`. Aborting the request's `signal` propagates immediately
-without trying the rest of the chain (the signal is a whole-chain budget). `stream()`
-falls back only **before the first delta** — once a delta is emitted the chain is
-committed to that provider and any later error propagates unchanged.
+without trying the rest of the chain (the signal is a whole-chain budget); a per-call
+`timeoutMs`, by contrast, applies to **each entry**, so a slow provider times out and
+the chain advances to the next (each entry gets a fresh deadline). `stream()` falls
+back only **before the first delta** — once a delta is emitted the chain is committed
+to that provider and any later error propagates unchanged.
 
 By default it falls back on any non-abort `ProviderError`. Because a different provider
 may accept a request the first rejected (e.g. differing structured-output schema rules),
@@ -1081,7 +1104,6 @@ cap, so cost is negligible. `.env` is gitignored and loaded automatically.
 
 Planned, roughly in priority order (subject to change):
 
-- **Per-request retry & timeout** overrides.
 - **Token counting** before send.
 - **Streaming in `combine`** — incremental progress across phases.
 - **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no added dependency.

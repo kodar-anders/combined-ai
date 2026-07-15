@@ -7,7 +7,12 @@ import { apiError, apiErrorFromBody } from "../errors";
 import { extractModel, isRecord } from "./extract";
 import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
-import { requestWithRetry, type RetryOptions } from "../transport";
+import {
+  readJsonBody,
+  requestControls,
+  requestWithRetry,
+  type RetryOptions,
+} from "../transport";
 import {
   type CacheControl,
   type CompletionRequest,
@@ -63,6 +68,7 @@ export class AnthropicProvider implements Provider {
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const model = request.model ?? this.#model;
     const { extendedCacheTtl } = prepareCacheControl(request);
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       "anthropic",
       `${this.#baseUrl}/v1/messages`,
@@ -72,16 +78,16 @@ export class AnthropicProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_MAX_TOKENS, false),
         ),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
       throw await apiError("anthropic", response);
     }
 
-    const data: unknown = await response.json();
+    const data: unknown = await readJsonBody("anthropic", response);
     if (isRecord(data) && isRecord(data.error)) {
       throw apiErrorFromBody("anthropic", response.status, data);
     }
@@ -104,6 +110,7 @@ export class AnthropicProvider implements Provider {
   ): AsyncGenerator<string, void, void> {
     const model = request.model ?? this.#model;
     const { extendedCacheTtl } = prepareCacheControl(request);
+    const { signal, retry } = requestControls(request, this.#retry);
     const response = await requestWithRetry(
       "anthropic",
       `${this.#baseUrl}/v1/messages`,
@@ -113,9 +120,9 @@ export class AnthropicProvider implements Provider {
         body: JSON.stringify(
           this.#buildBody(request, model, DEFAULT_STREAM_MAX_TOKENS, true),
         ),
-        signal: request.signal,
+        signal,
       },
-      this.#retry,
+      retry,
     );
 
     if (!response.ok) {
@@ -125,7 +132,7 @@ export class AnthropicProvider implements Provider {
       throw new Error("Anthropic streaming response had no body");
     }
 
-    for await (const event of sseJson(response.body)) {
+    for await (const event of sseJson(response.body, "anthropic")) {
       if (event.type === "message_stop") {
         return;
       }

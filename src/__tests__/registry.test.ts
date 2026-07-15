@@ -226,6 +226,21 @@ describe("ProviderRegistry.combine", () => {
     ).rejects.toThrow(/at least one message/);
   });
 
+  it("throws up front on an invalid timeoutMs (not as participant failures)", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        timeoutMs: 0,
+      }),
+    ).rejects.toThrow(/timeoutMs/);
+  });
+
   it("throws on a non-positive minParticipants", async () => {
     const registry = new ProviderRegistry({
       anthropic: { apiKey: "a" },

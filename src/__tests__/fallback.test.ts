@@ -1,7 +1,8 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import { ProviderError } from "../errors";
 import { type FallbackEvent } from "../fallback";
+import { OpenAIProvider } from "../providers/openai";
 import { ProviderRegistry } from "../registry";
 import { MockProvider } from "../testing/mock-provider";
 import { type Provider } from "../types";
@@ -439,5 +440,56 @@ describe("registry.fallback — stream()", () => {
     }
 
     expect(deltas).toEqual(["a"]);
+  });
+});
+
+describe("registry.fallback — per-request retry & timeout", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    (globalThis as any).fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  it("forwards the per-request retry to each attempt", async () => {
+    const a = new MockProvider({ name: "a", response: down("a") });
+    const b = new MockProvider({ name: "b", response: down("b") });
+    const registry = registryOf({ a, b });
+
+    const error = await registry
+      .fallback(["a", "b"])
+      .complete({ ...PROMPT, retry: { maxRetries: 4 } })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(a.calls[0]?.retry).toEqual({ maxRetries: 4 });
+    expect(b.calls[0]?.retry).toEqual({ maxRetries: 4 });
+  });
+
+  it("advances to the next entry when a provider times out", async () => {
+    // A real provider whose fetch hangs until the timeout aborts it: the timeout
+    // must surface as a transport ProviderError so the chain advances (the
+    // body-read regression would rethrow a raw DOMException as a bug instead).
+    (globalThis as any).fetch = jest.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const { signal } = init;
+          if (!signal) {
+            return;
+          }
+          signal.addEventListener("abort", () => {
+            reject(signal.reason as Error);
+          });
+        }),
+    );
+    const primary = new OpenAIProvider({ apiKey: "sk-test" });
+    const secondary = new MockProvider({ response: "secondary answer" });
+    const registry = registryOf({ primary, secondary });
+
+    const result = await registry
+      .fallback(["primary", "secondary"])
+      .complete({ ...PROMPT, timeoutMs: 10 });
+
+    expect(result.text).toBe("secondary answer");
+    expect(secondary.calls).toHaveLength(1);
   });
 });

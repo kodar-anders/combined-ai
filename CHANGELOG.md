@@ -9,6 +9,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **Per-request retry & timeout overrides**: `CompletionRequest` and `EmbeddingRequest` gained
+  `retry?: RetryOptions` and `timeoutMs?: number`. `retry` merges field-by-field over the
+  provider's construction-time retry (so `{ maxRetries: 0 }` disables retry while keeping the
+  provider's `baseDelayMs`). `timeoutMs` is a whole-call wall-clock deadline (sugar for combining
+  `signal` with `AbortSignal.timeout(ms)`) covering every retry attempt, the backoff waits, and —
+  for `stream()` — the full body read; on expiry the call rejects with a transport `ProviderError`
+  whose `cause` is a `TimeoutError`. An invalid `timeoutMs` (non-positive / non-finite / above the
+  `setTimeout` ceiling) throws. `combine` and `fallback` forward both to every underlying provider
+  call (per call, not run-wide — use `signal` for a run-wide budget). As part of this, a timeout or
+  network failure that fires **during a response body read** — the success `.json()`, the SSE
+  stream, or a non-2xx error body — is now wrapped as a transport `ProviderError` (previously a raw
+  `DOMException`, which broke fallback advancement, especially for streaming timeouts).
+
 - **Single-provider fallback chains** (`src/fallback.ts`): `registry.fallback(specs, options?)`
   returns a composable `Provider` that tries providers in order, catching a `ProviderError`
   and moving to the next (pairs with — doesn't replace — the per-provider `transport.ts`
@@ -20,6 +33,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   `options.onFallback` (both take a `FallbackEvent`) narrow the permissive default and observe
   advances. The returned provider has no `embed` (completion routing only). New exports:
   `FallbackSpec`, `FallbackOptions`, `FallbackEvent`.
+
+### Changed
+
+- Minimum Node version is now **20.3** (was 20): per-request `timeoutMs` combines a caller's
+  signal with the timeout via `AbortSignal.any`, added in Node 20.3.
 
 ## [0.4.0] - 2026-07-08
 

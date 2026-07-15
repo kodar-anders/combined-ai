@@ -8,6 +8,27 @@
 export type Role = "user" | "assistant";
 
 /**
+ * Tuning for the bounded exponential backoff providers apply on routine retryable
+ * statuses (429/503/529). Set it once at provider construction (each provider's
+ * options carry a `retry?`) and/or per call via {@link CompletionRequest.retry} /
+ * {@link EmbeddingRequest.retry} — a per-request value is merged field-by-field
+ * over the construction-time one, so you can override a single knob (and an explicit
+ * `maxRetries: 0` disables retry even when the provider set a non-zero default).
+ */
+export type RetryOptions = {
+  /**
+   * How many times to retry after the initial attempt on a retryable status. `0`
+   * disables retry. Defaults to `2`.
+   */
+  maxRetries?: number;
+  /**
+   * Base backoff in ms; the nth retry waits `baseDelayMs * 2 ** n` (capped at 60s),
+   * unless the response carries a `Retry-After` header. Defaults to `500`.
+   */
+  baseDelayMs?: number;
+};
+
+/**
  * A provider-native prompt-cache marker (**Anthropic only**). Attach it to a
  * content part (text/image/file) or the system prompt to place a cache breakpoint
  * there: Anthropic caches the prompt prefix up to and including the marked block
@@ -211,10 +232,29 @@ export type CompletionRequest = {
   toolChoice?: ToolChoice;
   /**
    * Abort the request (and, for `stream()`, the in-flight read) when this signal
-   * fires. For a timeout, pass `AbortSignal.timeout(ms)`. An aborted request
-   * rejects with a transport `ProviderError` whose `cause` is the abort reason.
+   * fires. An aborted request rejects with a transport `ProviderError` whose `cause`
+   * is the abort reason. For a simple deadline prefer {@link timeoutMs}; use `signal`
+   * for external cancellation or to bound a whole `combine`/`fallback` run (one signal
+   * cancels every call), whereas `timeoutMs` bounds each individual provider call.
    */
   signal?: AbortSignal;
+  /**
+   * Override the provider's construction-time {@link RetryOptions} for this call,
+   * merged field-by-field over it (so `{ maxRetries: 0 }` disables retry while
+   * keeping the provider's `baseDelayMs`). `combine`/`fallback` forward it to every
+   * underlying provider call.
+   */
+  retry?: RetryOptions;
+  /**
+   * A per-call wall-clock deadline in milliseconds. Sugar for combining `signal`
+   * with `AbortSignal.timeout(timeoutMs)`: it bounds the **whole call** — every retry
+   * attempt, the backoff waits between them, and (for `stream()`) the full body read.
+   * On expiry the call rejects with a transport `ProviderError` whose `cause` is a
+   * `TimeoutError` (distinguishable from a `signal` abort). Must be a positive number
+   * ≤ 2_147_483_647; an invalid value throws. In `combine`/`fallback` it applies to
+   * **each** provider call, not the whole run (use `signal` for a run-wide budget).
+   */
+  timeoutMs?: number;
 };
 
 /**
@@ -319,6 +359,10 @@ export type EmbeddingRequest = {
   dimensions?: number;
   /** Abort the request when this signal fires (see {@link CompletionRequest.signal}). */
   signal?: AbortSignal;
+  /** Override the provider's construction-time retry for this call (see {@link CompletionRequest.retry}). */
+  retry?: RetryOptions;
+  /** A per-call wall-clock deadline in ms (see {@link CompletionRequest.timeoutMs}). */
+  timeoutMs?: number;
 };
 
 /** The {@link EmbeddingRequest} options minus the `input` texts. */
