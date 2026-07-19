@@ -152,7 +152,27 @@ const MODELS: Record<string, ModelPricing> = {
   // OpenAI. Cache read carried for gpt-5.x (published on the pricing page); no
   // separate cache-write charge (caching is automatic). Older gpt-4.x rows omit
   // cachedInputPerMTok — those rates aren't on the page (see header note).
+  // The 5.6 family (GA 2026-07-09) is tiered Sol/Terra/Luna — no mini/nano this
+  // generation; gpt-5.6-terra is the default (OpenAI's production default, priced
+  // like the old gpt-5.4 default).
+  "gpt-5.6-sol": {
+    inputPerMTok: 5,
+    outputPerMTok: 30,
+    cachedInputPerMTok: 0.5,
+  },
+  "gpt-5.6-terra": {
+    inputPerMTok: 2.5,
+    outputPerMTok: 15,
+    cachedInputPerMTok: 0.25,
+  },
+  "gpt-5.6-luna": {
+    inputPerMTok: 1,
+    outputPerMTok: 6,
+    cachedInputPerMTok: 0.1,
+  },
   "gpt-5.5": { inputPerMTok: 5, outputPerMTok: 30, cachedInputPerMTok: 0.5 },
+  // gpt-5.5-pro has no published cache-read rate → omit it (falls back to full input).
+  "gpt-5.5-pro": { inputPerMTok: 30, outputPerMTok: 180 },
   "gpt-5.4": { inputPerMTok: 2.5, outputPerMTok: 15, cachedInputPerMTok: 0.25 },
   "gpt-5.4-mini": {
     inputPerMTok: 0.75,
@@ -184,6 +204,9 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 1.5,
     cachedInputPerMTok: 0.025,
   },
+  // The 2.5 generation is superseded by 3.x (default is now gemini-3.5-flash) and
+  // scheduled to retire 2026-10-16 (gemini-2.5-pro already 404s for new API keys).
+  // Kept for cost calc — still active for existing keys and present in usage logs.
   "gemini-2.5-pro": {
     inputPerMTok: 1.25,
     outputPerMTok: 10,

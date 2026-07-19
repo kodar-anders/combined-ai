@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **OpenAI pricing entries** for the GPT-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`;
+  GA 2026-07-09) and `gpt-5.5-pro`. The 5.6 line is tiered Sol/Terra/Luna (no mini/nano this
+  generation). `gpt-5.5-pro` has no published cache-read rate, so cached input falls back to the
+  full input rate.
+
+### Changed
+
+- **OpenAI default model** is now `gpt-5.6-terra` (was `gpt-5.4`). It is OpenAI's positioned
+  production default, one generation newer, at the same price point (`$2.50/$15` per 1M) as the
+  previous default. Pass `model: "…"` to select any other model.
+- **Google default model** is now `gemini-3.5-flash` (was `gemini-2.5-pro`). Google no longer
+  serves `gemini-2.5-pro` to new API keys (it returned a 404), and the whole 2.5 generation is
+  scheduled to retire 2026-10-16. `gemini-3.5-flash` is Google's official successor to
+  `gemini-2.5-flash`. The 2.5 models remain in the pricing table for cost calculation; pass
+  `model: "…"` explicitly to select any of them where still available.
+
 ## [0.5.0] - 2026-07-15
 
 ### Added

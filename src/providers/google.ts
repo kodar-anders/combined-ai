@@ -38,7 +38,7 @@ export type GoogleProviderOptions = {
   retry?: RetryOptions;
 };
 
-const DEFAULT_MODEL = "gemini-2.5-pro";
+const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_EMBED_MODEL = "gemini-embedding-001";
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 

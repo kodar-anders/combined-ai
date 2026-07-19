@@ -46,7 +46,7 @@ export type OpenAIProviderOptions = {
   retry?: RetryOptions;
 };
 
-const DEFAULT_MODEL = "gpt-5.4";
+const DEFAULT_MODEL = "gpt-5.6-terra";
 const DEFAULT_EMBED_MODEL = "text-embedding-3-small";
 const DEFAULT_BASE_URL = "https://api.openai.com";
 

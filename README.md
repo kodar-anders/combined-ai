@@ -524,12 +524,12 @@ new ProviderRegistry({
   },
   openai: {
     apiKey: "sk-...",
-    model: "gpt-5.4", // optional; default
+    model: "gpt-5.6-terra", // optional; default
     headers: { "x-trace": "..." }, // optional; merged into every request
   },
   google: {
     apiKey: "...",
-    model: "gemini-2.5-pro", // optional; default
+    model: "gemini-3.5-flash", // optional; default
   },
 });
 ```
@@ -586,10 +586,11 @@ Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 | `retry`          | `RetryOptions`     | Optional. Overrides the provider's construction-time retry for this call (merged field-wise).    |
 | `timeoutMs`      | `number`           | Optional. Whole-call wall-clock deadline — see [Retries & cancellation](#retries--cancellation). |
 
-> **Gemini note:** Gemini 2.5 models are _thinking_ models, and their internal
-> thinking tokens count against `maxTokens`. A very small cap can be consumed
-> entirely by thinking, leaving the visible answer empty or truncated — give
-> Gemini ample headroom (`gemini-2.5-pro` can't fully disable thinking).
+> **Gemini note:** Gemini 2.5 and 3.x models are _thinking_ models, and their
+> internal thinking tokens count against `maxTokens`. A very small cap can be
+> consumed entirely by thinking, leaving the visible answer empty or truncated —
+> give Gemini ample headroom (the default `gemini-3.5-flash` can't fully disable
+> thinking).
 
 ### Result fields
 

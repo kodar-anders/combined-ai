@@ -45,7 +45,7 @@ describe("OpenAIProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "gpt-5.4",
+          model: "gpt-5.6-terra",
           choices: [
             {
               message: { role: "assistant", content: "Hello, world." },
@@ -60,7 +60,7 @@ describe("OpenAIProvider.complete", () => {
       system: "Be brief.",
     });
 
-    expect(result).toEqual({ text: "Hello, world.", model: "gpt-5.4" });
+    expect(result).toEqual({ text: "Hello, world.", model: "gpt-5.6-terra" });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/chat/completions");
@@ -72,7 +72,7 @@ describe("OpenAIProvider.complete", () => {
 
     const body = JSON.parse(init.body as string);
     expect(body).toEqual({
-      model: "gpt-5.4",
+      model: "gpt-5.6-terra",
       max_completion_tokens: 16000,
       messages: [
         { role: "system", content: "Be brief." },

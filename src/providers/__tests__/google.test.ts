@@ -45,7 +45,7 @@ describe("GoogleProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          modelVersion: "gemini-2.5-pro",
+          modelVersion: "gemini-3.5-flash",
           candidates: [
             {
               content: { role: "model", parts: [{ text: "Hello, world." }] },
@@ -60,11 +60,11 @@ describe("GoogleProvider.complete", () => {
       system: "Be brief.",
     });
 
-    expect(result).toEqual({ text: "Hello, world.", model: "gemini-2.5-pro" });
+    expect(result).toEqual({ text: "Hello, world.", model: "gemini-3.5-flash" });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
     );
     expect(init.method).toBe("POST");
     expect(init.headers).toMatchObject({
@@ -134,19 +134,19 @@ describe("GoogleProvider.complete", () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
       json: () =>
-        Promise.resolve({ modelVersion: "gemini-2.5-flash", candidates: [] }),
+        Promise.resolve({ modelVersion: "gemini-2.5-pro", candidates: [] }),
     }));
 
     const provider = new GoogleProvider({ apiKey: "key-test" });
     await provider.complete({
       messages: [{ role: "user", content: "Hi" }],
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-pro",
       maxTokens: 100,
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
     );
     const body = JSON.parse(init.body as string);
     expect(body.generationConfig.maxOutputTokens).toBe(100);
@@ -675,7 +675,7 @@ describe("GoogleProvider.stream", () => {
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
     );
     const body = JSON.parse(init.body as string);
     expect(body.generationConfig.maxOutputTokens).toBe(64000);
