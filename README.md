@@ -30,38 +30,25 @@ const result = await registry.combine({
 console.log(result.text);
 ```
 
+## Installation
+
+```bash
+npm install combined-ai
+# or: yarn add combined-ai / pnpm add combined-ai
+```
+
+Requires **Node.js ≥ 20.3** (uses the global `fetch`/`ReadableStream`/`AbortSignal.any`).
+The published package is dual ESM + CJS with TypeScript types, so any package
+manager works as a consumer. The library **never reads environment variables** —
+you always pass API keys in explicitly via the registry config.
+
 ## Contents
 
 - [Why combine?](#why-combine)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Combining providers](#combining-providers)
-  - [Consensus](#consensus)
-  - [Pipeline](#pipeline)
-  - [Ensemble](#ensemble)
-  - [Broadcast](#broadcast)
-  - [Panel](#panel)
-  - [Per-participant models](#per-participant-models)
-  - [Reading the result](#reading-the-result)
-  - [Progress events](#progress-events)
+- [Combining providers](#combining-providers) — the five strategies
 - [Single-provider usage](#single-provider-usage)
-  - [Provider configuration](#provider-configuration)
-  - [Custom & gateway providers](#custom--gateway-providers)
-  - [Request options](#request-options)
-  - [Result fields](#result-fields)
-  - [Cost & pricing](#cost--pricing)
-  - [Embeddings](#embeddings)
-  - [Structured output](#structured-output)
-  - [Tool calling](#tool-calling)
-  - [Multimodal input](#multimodal-input)
-  - [Error handling](#error-handling)
-  - [Retries & cancellation](#retries--cancellation)
-  - [Fallback chains](#fallback-chains)
-- [Testing](#testing)
+- [Reference documentation](#reference-documentation) (deep-dive pages)
 - [Public API](#public-api)
-- [Development](#development)
-- [Changelog](#changelog)
-- [License](#license)
 
 ## Why combine?
 
@@ -81,34 +68,9 @@ All five share one interface: configure a `ProviderRegistry`, then call
 `registry.combine({ participants, messages, strategy })`. Participants can be
 different providers, or the **same provider with different models**.
 
-## Requirements
-
-- Node.js ≥ 20.3 (uses the global `fetch`, `ReadableStream`, `TextDecoder`, and
-  `AbortSignal.any`).
-
-## Installation
-
-```bash
-npm install combined-ai
-# or: yarn add combined-ai / pnpm add combined-ai
-```
-
-The published package is dual ESM + CJS with TypeScript types — any package
-manager works as a consumer. (This repo uses Yarn 4 with Plug'n'Play for
-development only; see [Development](#development).)
-
-The library never reads environment variables — you always pass API keys in
-explicitly via the registry config.
-
 ## Combining providers
 
 ```ts
-const registry = new ProviderRegistry({
-  anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! },
-  openai: { apiKey: process.env.OPENAI_API_KEY! },
-  google: { apiKey: process.env.GEMINI_API_KEY! },
-});
-
 const result = await registry.combine({
   messages: [{ role: "user", content: "Design a rate limiter." }],
   participants: ["anthropic", "openai", "google"],
@@ -117,9 +79,8 @@ const result = await registry.combine({
 ```
 
 `combine()` accepts the same request fields as `complete()` (`messages`,
-`system`, `model`, `maxTokens`, `signal`, `retry`, `timeoutMs`) — they apply to
-every participant unless a participant overrides them (`retry`/`timeoutMs` apply
-per participant call; see [Retries & cancellation](#retries--cancellation)) — plus:
+`system`, `model`, `maxTokens`, `signal`, `retry`, `timeoutMs`) — applied to every
+participant unless a participant overrides them — plus:
 
 | Field             | Type                                                                        | Notes                                                                                                    |
 | ----------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -131,29 +92,18 @@ per participant call; see [Retries & cancellation](#retries--cancellation)) — 
 | `crossExamine`    | `boolean`                                                                   | _Panel only._ Run a review round before synthesis (default `false`).                                     |
 | `responseFormat`  | `ResponseFormat`                                                            | _Ensemble only (required there)._ The shared JSON Schema every model answers under.                      |
 
-A participant's `instruction` (a role/persona) is honored only by the `panel`
-strategy; other strategies ignore it.
-
-**Two ways to call it.** When you know the strategy at the call site, prefer the
-per-strategy method — `registry.consensus(req)`, `.pipeline(req)`,
-`.ensemble(req)`, `.broadcast(req)`, `.panel(req)` — each takes that strategy's request type and
-returns its **concrete** result (`ConsensusResult`, `PipelineResult`, …), so you
-never narrow a union. `registry.combine(request)` is the dispatcher and is generic over the strategy:
-pass a literal `strategy` and it returns that strategy's concrete result; pass a
-`strategy` only known at runtime and it returns the full `CombineResult` union to
-narrow. The two share one engine and the same validation. See
-[Reading the result](#reading-the-result).
+**Two ways to call it.** Use a per-strategy method — `registry.consensus(req)`,
+`.pipeline(req)`, `.ensemble(req)`, `.broadcast(req)`, `.panel(req)` — to get that
+strategy's **concrete** result type, or the generic `registry.combine(request)`
+dispatcher (which returns the concrete type for a literal `strategy` and the
+`CombineResult` union for a dynamic one). Both share one engine and the same
+validation.
 
 ### Consensus
 
-The default. Best when you want a single, well-reasoned answer that has been
-checked by other models.
-
-1. **Draft** — every participant answers the prompt in parallel.
-2. **Critique** — every participant sees all drafts and critiques them, arguing
-   for the best one and ending with a structured verdict.
-3. **Synthesize** — the _synthesizer_ reads the drafts and critiques and writes
-   the single final answer.
+The default. Every participant drafts in parallel, each critiques all drafts
+(anonymized by default to neutralize bias), then the `synthesizer` writes the one
+final answer.
 
 ```ts
 const result = await registry.combine({
@@ -165,66 +115,36 @@ const result = await registry.combine({
 console.log(result.text); // the final synthesized answer
 ```
 
-Behavior worth knowing:
-
-- **Anonymized by default.** Critics and the synthesizer see `Answer A`/`B`/`C`
-  rather than model names, to neutralize brand and self-preference bias (pass
-  `attribution: "attributed"` to opt out). The result still records each
-  outcome's `id` and `provider`.
-- **Correctness over popularity.** The synthesizer is told to adopt a lone
-  correct answer rather than average it away, not to favor its own (anonymized)
-  draft, and to flag genuine disagreement instead of papering over it. The final
-  answer is written fresh — it never alludes to the drafts, critiques, or
-  internal labels (a final sanitizing pass strips any leftover meta-commentary).
-- **Lean inter-model messages.** The draft and critique text passed between
-  models drops greetings and filler but keeps reasoning and caveats, so critics
-  can check the _why_. The user-facing synthesis is unconstrained.
-- **A single participant** with a successful draft degrades to a plain completion
-  (no critique/synthesis); if that lone draft fails or is empty, the run throws.
-- **Optional draft agreement.** Pass an `embedding` option (see
-  [Broadcast](#broadcast)) to attach `result.draftAgreement` — a semantic
-  comparison of the surviving drafts (an `agreement` score plus the `outlier`
-  drafter). Informational only; it does not affect the synthesized answer.
+→ [Consensus details](./docs/strategies.md#consensus)
 
 ### Pipeline
 
 A conveyor belt: each participant refines the previous one's answer, in
-**participant order**. The first writes an initial answer; each subsequent stage
-gets the question plus the running answer and improves it; the **last stage to
-produce an answer wins**.
+participant order. The first writes an initial answer; each later stage improves
+it; the **last stage to produce an answer wins**.
 
 ```ts
-const result = await registry.combine({
+const result = await registry.pipeline({
   messages: [{ role: "user", content: "Design a rate limiter." }],
   participants: ["anthropic", "openai", "google"], // the conveyor order
-  strategy: "pipeline",
 });
 
 console.log(result.text); // the final, refined answer
 console.log(result.finalParticipant); // id of the last stage that produced one
 ```
 
-- **Refiners preserve, not rewrite.** Each stage treats the current answer as a
-  strong baseline — fix errors, fill gaps, sharpen wording, but keep what's
-  correct (there's no downstream synthesizer to catch a regression).
-- **The final answer is sanitized** when a refining stage actually changed it, to
-  strip "I improved the previous answer…" narration. A first-stage answer or an
-  unchanged passthrough is returned as-is (no wasted call).
-- `synthesizer`, `attribution`, and `minParticipants` are consensus-specific and
-  ignored here.
+→ [Pipeline details](./docs/strategies.md#pipeline)
 
 ### Ensemble
 
 A multi-model vote on **structured output** — the thing one provider can't give
-you. Every participant answers the prompt independently under the same JSON
-Schema, the typed objects are merged **mechanically** (no model adjudicates), and
-you get an **agreement score** telling you how strongly the models concurred.
+you. Every participant answers under the same JSON Schema, the typed objects are
+merged **mechanically** (no model adjudicates), and you get an **agreement score**.
 
 ```ts
-const result = await registry.combine({
+const result = await registry.ensemble({
   messages: [{ role: "user", content: "Extract the city and country: ..." }],
   participants: ["anthropic", "openai", "google"],
-  strategy: "ensemble",
   responseFormat: {
     type: "json_schema",
     schema: {
@@ -241,97 +161,38 @@ console.log(result.agreement.overall); // 0–1: how much the models agreed
 console.log(result.agreement.byField); // e.g. { city: 1, country: 0.67 }
 ```
 
-How the merge works (field-wise over the union of top-level keys):
-
-- **Every field is a majority vote** — the most common value by deep equality,
-  ties broken by participant order. The merged value is always one a model
-  actually returned (never synthesized or averaged), so it stays within the
-  schema's types.
-- **Agreement** per field is the share of **all** valid responses that voted for
-  the merged value; `overall` is the mean across fields. A field most models
-  omitted scores low — a low score flags it for review.
-
-Notes:
-
-- **`responseFormat` is required** for ensemble and **rejected** for the other
-  strategies. Its schema must have an **object** root (the field-wise vote needs
-  named fields).
-- **The merge is shallow** — nested objects/arrays are voted on as whole values.
-  Keep schemas to flat fields for the most useful per-field agreement.
-- **Optional semantic agreement.** With an `embedding` option (see
-  [Broadcast](#broadcast)), `result.semanticAgreement` adds a per-field
-  meaning-aware score over the **string** fields, so paraphrases ("Paris" vs "the
-  city of Paris") count as agreement where the exact-match vote wouldn't. The
-  `merged` value is still the deterministic exact-match vote — embeddings never
-  pick it.
+→ [Ensemble details](./docs/strategies.md#ensemble)
 
 ### Broadcast
 
-The simplest strategy: send the prompt to every participant **in parallel** and
-get **all** of their answers back, unchanged. There is no critique, synthesis, or
-vote — broadcast deliberately does **not** combine. Use it to compare models side
-by side, or to drive your own selection/UI over the raw outputs.
+The simplest strategy: send the prompt to every participant in parallel and get
+**all** of their answers back, unchanged. No critique, synthesis, or vote — use
+it to compare models side by side or drive your own selection over the raw
+outputs.
 
 ```ts
-const result = await registry.combine({
+const result = await registry.broadcast({
   messages: [{ role: "user", content: "Name a good book on databases." }],
   participants: ["anthropic", "openai", "google"],
-  strategy: "broadcast",
 });
 
 for (const response of result.responses) {
-  if (response.status === "ok") {
+  if (response.status === "ok")
     console.log(`${response.id}: ${response.result.text}`);
-  } else {
-    console.log(`${response.id} failed: ${response.error.message}`);
-  }
+  else console.log(`${response.id} failed: ${response.error.message}`);
 }
 ```
 
-- **No single answer**, so `BroadcastResult` has **no `text`** field — read
-  `result.responses` (one outcome per participant, in participant order).
-- **Each model answers the raw prompt** (no shaped framing) — you get the
-  unmodified per-model reply.
-- **Fails only when every participant fails**; one or more failures are recorded
-  in `responses` and the run still returns the successes. An empty-text answer
-  still counts as a success (broadcast returns what each model gave back).
-- **No structured output:** `responseFormat` is rejected (it's the
-  [ensemble](#ensemble) strategy's job); `synthesizer`, `attribution`, and
-  `minParticipants` are consensus-specific and ignored.
+`BroadcastResult` has **no `text`** field — read `result.responses`.
 
-**Semantic comparison (optional).** Pass an `embedding` option to embed every
-answer with one designated model and get a `result.semantic` alongside the raw
-responses — informational, the responses are unchanged:
-
-```ts
-const result = await registry.combine(
-  {
-    messages: [{ role: "user", content: "Name a good book on databases." }],
-    participants: ["anthropic", "openai", "google"],
-    strategy: "broadcast",
-  },
-  { embedding: { provider: "openai" } }, // one model embeds all answers
-);
-
-result.semantic?.agreement; // mean pairwise cosine — how much the models converged
-result.semantic?.outlier; // the dissenting participant id (farthest from the centroid)
-result.semantic?.clusters; // [["anthropic","openai"],["google"]] — who agreed with whom
-```
-
-The embedding provider must be configured and support embeddings (so not
-`"anthropic"`). It's used only for comparison — cross-provider vectors aren't
-comparable, so all answers go through this one model. The embedding call's usage
-is included in `result.usage`. `semantic` is omitted if fewer than two non-empty
-answers come back or the embedding call fails.
+→ [Broadcast details](./docs/strategies.md#broadcast)
 
 ### Panel
 
-A **role-based panel**: each participant answers the same prompt through its own
-`instruction` (a role/persona), then one participant **integrates** the
-complementary perspectives into a single answer. Because the diversity comes from
-the instruction, not the model, you can run the **same model several times** as
-different experts. Unlike [consensus](#consensus) — which adjudicates for the one
-correct answer — panel preserves each perspective's distinct contribution.
+A role-based panel: each participant answers through its own `instruction` (a
+role/persona), then one participant **integrates** the perspectives into a single
+answer. The diversity comes from the instruction, so you can run the **same model
+several times** as different experts.
 
 ```ts
 const result = await registry.panel({
@@ -346,14 +207,7 @@ const result = await registry.panel({
     {
       provider: "openai",
       label: "sre",
-      instruction:
-        "You are an SRE. Focus on operability, on-call, and failure modes.",
-    },
-    {
-      provider: "openai",
-      label: "eng-manager",
-      instruction:
-        "You are an engineering manager. Focus on team cost and delivery risk.",
+      instruction: "You are an SRE. Focus on operability and failure modes.",
     },
   ],
   synthesizer: "architect", // integrates the perspectives; defaults to the first participant
@@ -362,193 +216,26 @@ const result = await registry.panel({
 
 console.log(result.text); // the integrated answer
 result.answers; // each role's raw answer (participant order)
-result.reviews; // each role's cross-examination ([] when crossExamine is off)
 ```
 
-- **`instruction` defines the role.** It's a per-participant field on
-  `ParticipantSpec`; only panel honors it (other strategies ignore it). Give
-  panelists that share a provider+model distinct `label`s.
-- **The synthesizer integrates neutrally** — it runs _without_ its own role
-  instruction, so a participant that is also the synthesizer answers in character
-  in phase 1 but integrates impartially at the end. It falls back to another
-  survivor if the chosen one fails.
-- **`crossExamine`** (default `false`) adds a review round where each panelist
-  cross-examines the others through its own lens before synthesis — extra calls,
-  so it's opt-in.
-- **Degrades gracefully:** with a single surviving answer there is nothing to
-  integrate, so that answer is returned (sanitized); it throws only when **no**
-  participant answers. There is no `minParticipants`/`attribution`.
-- **No structured output:** `responseFormat` is rejected (that's the
-  [ensemble](#ensemble) strategy's job).
+→ [Panel details](./docs/strategies.md#panel)
 
-**Semantic comparison (optional).** As with [broadcast](#broadcast), pass an
-`embedding` option to attach `result.perspectiveAgreement` (a `SemanticComparison`
-over the role answers) — informational, and it never changes the synthesis. For a
-panel, _low_ agreement is expected and healthy; _high_ agreement is the signal
-worth noticing (the roles collapsed to the same answer), and `outlier` names the
-most divergent role.
-
-### Per-participant models
-
-Each participant is identified by an **id** (its label). A bare provider name has
-an id equal to the provider name; the object form derives `<provider>-<model>`
-when you set a model (or set `label` yourself). This lets one combine mix cheap
-drafters with a strong synthesizer — and even run the **same provider twice**
-with different models:
-
-```ts
-await registry.combine({
-  messages,
-  participants: [
-    { provider: "google", model: "gemini-2.5-flash" }, // id "google-gemini-2.5-flash"
-    { provider: "openai", model: "gpt-4.1-mini" }, //     id "openai-gpt-4.1-mini"
-    { provider: "openai", model: "gpt-4.1" }, //          id "openai-gpt-4.1" (same provider, different model)
-    { provider: "anthropic" }, //                         id "anthropic" (default model)
-  ],
-  synthesizer: "anthropic", // a strong model adjudicates the cheap drafts
-});
-```
-
-Two participants that resolve to the same id are rejected unless you give one an
-explicit `label`. A participant's `model`/`maxTokens` take precedence over the
-request-wide values.
-
-### Reading the result
+### Reading results
 
 Every outcome carries both an `id` (the participant label) and `provider` (the
-actual provider it ran on); `usage` is aggregated across **every** model call the
-run made (the true multi-call cost), keyed by `id`.
+actual provider it ran on); `result.usage` aggregates token usage across **every**
+model call the run made. `text` is present on every strategy **except** broadcast.
 
-If you call a per-strategy method, the result type is already concrete — no
-narrowing:
+**Partial failures are tolerated.** A participant that errors — or returns empty/
+invalid output — is recorded in the result and dropped from the rest of the round;
+the run proceeds with the survivors and throws only when too few remain. `combine()`
+also validates the request up front (participants, unique ids, non-empty messages,
+`responseFormat` for ensemble, …).
 
-```ts
-const result = await registry.pipeline({ messages, participants });
-result.finalParticipant; // typed PipelineResult — `stages`, `text`, … all in scope
-```
-
-`combine()` with a **literal** `strategy` is just as precise (it's generic over
-the strategy, inferring the result type from `strategy`). You only narrow when the
-strategy is dynamic, in which case `combine()` returns the `CombineResult` union
-discriminated on `strategy`:
-
-```ts
-const strategy = pickStrategyAtRuntime(); // : StrategyName
-const result = await registry.combine({ messages, participants, strategy });
-
-result.usage; // { total, byParticipant, calls } — aggregated token usage, or undefined
-
-if (result.strategy === "consensus") {
-  result.text; // the final synthesized answer
-  result.synthesizer; // id of the participant that wrote the final answer
-  result.drafts; // each participant's first-pass answer (has .id, .provider)
-  result.critiques; // each participant's critique
-} else if (result.strategy === "pipeline") {
-  result.text; // the final, refined answer
-  result.finalParticipant; // id of the last stage that produced an answer
-  result.stages; // each stage in conveyor order (ok/failed)
-} else if (result.strategy === "ensemble") {
-  result.text; // the merged object serialized as JSON
-  result.merged; // the voted object
-  result.agreement; // { overall, byField }
-  result.responses; // each participant's structured answer (ok/failed)
-} else if (result.strategy === "broadcast") {
-  // No `text` — broadcast returns every raw answer, not one combined answer.
-  result.responses; // each participant's raw answer in order (ok/failed)
-}
-```
-
-`text` is present on every strategy **except** `broadcast` (which has no single
-answer), so narrow on `result.strategy` before reading it.
-
-**Partial failures are tolerated.** A participant that errors — or succeeds but
-returns empty/invalid output — is recorded in the result and dropped from the
-rest of the round; the run proceeds with the survivors. It throws only when too
-few survive: consensus needs `minParticipants` drafts, pipeline needs at least
-one advancing stage, ensemble needs at least one valid object, and broadcast needs
-at least one participant to succeed. `combine()` also
-validates the request up front and throws on bad input (no participants,
-duplicate ids, empty `messages`, an out-of-range `minParticipants`, a
-`synthesizer` that isn't a participant id, an unknown `strategy`, or a missing /
-non-object `responseFormat` for ensemble).
-
-### Progress events
-
-`combine()` takes an optional second argument with an `onEvent` callback that
-fires as the run progresses — handy for a status display. Events are status only
-(no token streaming); the answer is still the resolved
-result.
-
-```ts
-await registry.combine(
-  { messages, participants: ["anthropic", "openai"] },
-  {
-    onEvent: (event) => {
-      switch (event.type) {
-        case "phase":
-          console.log(`→ ${event.phase}`); // consensus phase boundary
-          break;
-        case "draft":
-        case "critique": // consensus
-        case "answer":
-        case "review": // panel
-        case "stage": // pipeline (has .index)
-        case "response": // ensemble, broadcast
-          console.log(`  ${event.provider}: ${event.status}`); // "ok" | "failed"
-          break;
-        case "budget": // a phase was skipped to stay near budget (see below)
-          console.log(
-            `  budget: skipped ${event.skipped ?? "(under-enforced)"}`,
-          );
-          break;
-      }
-    },
-  },
-);
-```
-
-Errors thrown from `onEvent` are swallowed so a listener can't break the run, and
-there is no terminal event (the result is the return value).
-
-### Combine cost & budgets
-
-A combine makes several model calls, so `costOf` (single-result) isn't enough.
-`combineCost(result, options?)` prices a finished run in USD, summing **each call
-individually** from the result's per-call `usage.calls` ledger — the only correct
-way to price it (summing a participant's calls then pricing the sum would mishandle
-tiered rates and thinking residuals).
-
-```ts
-import { combineCost } from "combined-ai";
-
-const result = await registry.combine({ messages, participants });
-const cost = combineCost(result); // { totalCost, byParticipant } in USD, or undefined
-```
-
-It returns `undefined` when nothing is priceable (no usage, or every call's model is
-unknown to the registry). Calls whose model the registry doesn't know are skipped, so
-`totalCost` can understate a mixed run — pass `options.models` (the same override as
-`costOf`) to price custom-provider models.
-
-Pass a **budget** to cap spend. It's a best-effort _soft floor on optional work_, not a
-hard cap: the phases required to produce an answer (consensus drafts + synthesis, the
-pipeline's first stage) always run, so realized cost can exceed it — but once the
-running cost crosses the ceiling, the run skips its _optional_ phases (consensus
-critiques/sanitize, pipeline refiners/sanitize) and emits a `budget` event.
-
-```ts
-await registry.combine(
-  { messages, participants: ["anthropic", "openai", "gemini"] },
-  { budget: { usd: 0.05, models: myPricingOverrides } },
-);
-```
-
-Cost is priced with the built-in registry; pass `budget.models` to price custom
-models (a call that can't be priced contributes 0 — a budget over an all-uncatalogued
-roster never triggers, surfaced once as a `budget` event with `underEnforced: true`).
-Budget on the `ensemble`/`broadcast` strategies is accepted for a uniform API but
-**inert** — their single parallel fan-out has no later phase to pre-empt, so they
-emit no `budget` event; price a finished run with `combineCost(result)` instead.
+For the full result-narrowing guide, per-participant models, progress events, and
+the optional **semantic-agreement** signals (`embedding` option), see
+[Combine strategies](./docs/strategies.md). To price a run or cap its spend, see
+[`combineCost` and budgets](./docs/cost-and-caching.md#combine-cost--budgets).
 
 ## Single-provider usage
 
@@ -574,13 +261,8 @@ for await (const delta of provider.stream({
 }
 ```
 
-You can also inspect what's configured:
-
-```ts
-registry.has("openai"); // -> false if not configured
-registry.names(); // -> the configured provider names
-registry.select("openai"); // -> throws: No provider "openai" configured. Configured: anthropic
-```
+You can also inspect what's configured — `registry.has("openai")` and
+`registry.names()`.
 
 ### Provider configuration
 
@@ -609,15 +291,12 @@ new ProviderRegistry({
 ### Custom & gateway providers
 
 Beyond the three built-ins you can register extra providers under names you
-choose, via a `custom` map. Two forms:
+choose, via a `custom` map:
 
 - **`openai-compatible`** — point the OpenAI provider at any Chat Completions
   endpoint (OpenRouter, Together, Groq, Ollama, a local server, …). `baseUrl`
-  (excluding the `/v1/chat/completions` path) and `model` are required; `headers`
-  and `retry` are optional.
-- **`provider`** — bring your own object implementing the `Provider` interface,
-  for an API the library doesn't speak natively or to wrap one with
-  instrumentation.
+  (excluding the request path) and `model` are required; `headers`/`retry` optional.
+- **`provider`** — bring your own object implementing the `Provider` interface.
 
 ```ts
 const registry = new ProviderRegistry({
@@ -637,477 +316,35 @@ registry.select("groq"); // a normal Provider
 registry.combine({ participants: ["anthropic", "groq"], messages }); // mix freely
 ```
 
-A custom name that collides with a built-in (`anthropic`/`openai`/`google`)
-throws at construction. Custom providers work everywhere a built-in does —
-`select()`, `combine()` participants, and results.
-
-### Request options
-
-Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
-
-| Field            | Type               | Notes                                                                                            |
-| ---------------- | ------------------ | ------------------------------------------------------------------------------------------------ |
-| `messages`       | `Message[]`        | Required. `{ role: "user" \| "assistant"; content: string \| ContentPart[] }`                    |
-| `system`         | `string`           | Optional system prompt.                                                                          |
-| `model`          | `string`           | Optional per-request model override.                                                             |
-| `maxTokens`      | `number`           | Optional output cap (defaults: 16000 complete / 64000 stream).                                   |
-| `responseFormat` | `ResponseFormat`   | Optional. Constrain the output to a JSON Schema — see [Structured output](#structured-output).   |
-| `tools`          | `ToolDefinition[]` | Optional. Tools the model may call — see [Tool calling](#tool-calling).                          |
-| `toolChoice`     | `ToolChoice`       | Optional. `"auto" \| "any" \| "none" \| { name }`.                                               |
-| `signal`         | `AbortSignal`      | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                   |
-| `retry`          | `RetryOptions`     | Optional. Overrides the provider's construction-time retry for this call (merged field-wise).    |
-| `timeoutMs`      | `number`           | Optional. Whole-call wall-clock deadline — see [Retries & cancellation](#retries--cancellation). |
-
-> **Gemini note:** Gemini 2.5 and 3.x models are _thinking_ models, and their
-> internal thinking tokens count against `maxTokens`. A very small cap can be
-> consumed entirely by thinking, leaving the visible answer empty or truncated —
-> give Gemini ample headroom (the default `gemini-3.5-flash` can't fully disable
-> thinking).
-
-### Result fields
-
-`complete()` resolves to a `CompletionResult`:
-
-| Field             | Type           | Notes                                                                                                                                                    |
-| ----------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `text`            | `string`       | The full answer.                                                                                                                                         |
-| `model`           | `string`       | The model that actually produced the response.                                                                                                           |
-| `finishReason`    | `FinishReason` | Normalized stop reason: `"stop"` \| `"length"` \| `"content_filter"` \| `"tool_use"` \| `"other"`.                                                       |
-| `rawFinishReason` | `string`       | The provider's exact stop-reason string.                                                                                                                 |
-| `refusal`         | `string`       | The refusal message when the model declined.                                                                                                             |
-| `usage`           | `Usage`        | Token usage (`inputTokens`/`outputTokens`/`totalTokens`, plus optional `cachedInputTokens`/`cacheCreationInputTokens`), or `undefined` if none reported. |
-| `parsed`          | `unknown`      | The parsed structured output when `responseFormat` was given.                                                                                            |
-| `toolCalls`       | `ToolCall[]`   | The tool calls the model requested, when it called any.                                                                                                  |
-
-`finishReason` lets you tell a truncated/refused answer apart from a genuinely
-empty one instead of just seeing `text: ""`. A `"length"` reason with empty
-`text` on Gemini usually means the cap was spent on thinking tokens. `refusal` is
-populated by OpenAI and Anthropic, and a set `refusal` always pairs with
-`"content_filter"`; Gemini has no refusal-text field, so it signals a refusal via
-`finishReason: "content_filter"` alone (the block reason lands in
-`rawFinishReason`).
-
-```ts
-const { text, finishReason, refusal } = await provider.complete({ messages });
-if (finishReason === "length") {
-  // raise maxTokens and retry
-} else if (refusal !== undefined) {
-  console.warn(`Model declined: ${refusal}`);
-}
-```
-
-### Cost & pricing
-
-`costOf(result)` turns the token `usage` a completion reports into a dollar
-`CostBreakdown`, using a tiny built-in pricing registry:
-
-```ts
-import { costOf } from "combined-ai";
-
-const result = await registry.select("anthropic").complete({ messages });
-const cost = costOf(result);
-// → { model: "claude-opus-4-8", inputCost, outputCost, totalCost } | undefined
-if (cost) console.log(`$${cost.totalCost.toFixed(4)}`);
-```
-
-It returns `undefined` (never throws) when the model isn't in the registry or the
-result carries no `usage` — both normal for custom/gateway providers. `costOfUsage(usage, model)`
-is the same calculation from a raw `Usage` + model id.
-
-The registry resolves dated snapshots and Gemini `modelVersion` strings to their
-base entry (e.g. `gpt-4.1-2025-04-14` → `gpt-4.1`), and bills Gemini thinking
-tokens at the output rate. Costs are raw floating-point USD — round at display.
-
-**Prompt caching** is reflected in dollars too. `usage.inputTokens` is the total
-billable prompt; `cachedInputTokens` (a discounted cache read) and
-`cacheCreationInputTokens` (an Anthropic cache write, billed at a premium) are
-subsets of it, set only when the provider reports them — Anthropic
-(`cache_read`/`cache_creation`), OpenAI (`cached_tokens`), and Gemini 2.5
-(`cachedContentTokenCount`). `costOf` bills reads at `cachedInputPerMTok` and
-writes at `cacheWriteInputPerMTok`, each falling back to the normal input rate
-when a model lists no cache rate (Anthropic and Gemini rates are built in; OpenAI
-falls back until added — supply it via `options.models`). Reporting is
-`complete()`-only (streaming reports no usage).
-
-To **enable** caching: OpenAI and Gemini 2.5 cache automatically, so reporting
-just works. Anthropic is manual — mark a cache breakpoint with `cacheControl` on a
-content part or on the system prompt's object form (Anthropic caches the prefix up
-to the marker and re-uses it at ~90% off on later requests with the same prefix):
-
-```ts
-await registry.select("anthropic").complete({
-  system: { text: bigStableInstructions, cacheControl: {} }, // 5-min cache
-  messages: [
-    {
-      role: "user",
-      content: [
-        { type: "text", text: bigSharedContext, cacheControl: { ttl: "1h" } },
-        { type: "text", text: "What changed since yesterday?" }, // varies — after the breakpoint
-      ],
-    },
-  ],
-});
-```
-
-Omit `ttl` for the default 5-minute cache; `"1h"` opts into the 1-hour cache (the
-1-hour beta header is sent automatically). At most 4 breakpoints per request.
-OpenAI and Gemini ignore the marker; `combine` ignores it (its strategies build
-their own prompts).
-
-**Prices are best-effort and hand-maintained** (a small table of the most common
-models across the three providers, not an exhaustive catalog), dated by
-`PRICING_VERIFIED_ON`. Correct a stale price or add your own model with
-`options.models` — no library release needed:
-
-```ts
-costOf(result, {
-  models: { "my-model": { inputPerMTok: 0.5, outputPerMTok: 1.5 } },
-});
-```
-
-`findModel(id)` and `listModels()` expose the registry directly.
-
-### Embeddings
-
-`registry.embed(name, text)` embeds a single string; `registry.embedMany(name, texts)`
-embeds a batch in one call (one vector per input, in order):
-
-```ts
-import { cosineSimilarity } from "combined-ai";
-
-const { embedding } = await registry.embed("openai", "a dog barks");
-const { embeddings } = await registry.embedMany("google", [
-  "a puppy yaps",
-  "the stock market fell",
-]);
-
-// Compare meaning with cosineSimilarity (always cosine — never a raw dot product):
-cosineSimilarity(embedding, embeddings[0]); // higher → closer in meaning
-```
-
-OpenAI (default `text-embedding-3-small`) and Google (default `gemini-embedding-001`)
-support embeddings. **Anthropic does not** — it has no first-party embeddings endpoint,
-so `embed("anthropic", …)` throws. Embeddings are an optional capability on the
-`Provider` contract, so a bring-your-own provider may also implement `embed`.
-
-Pass a per-call `model` or `dimensions` (reduces the output vector size — OpenAI
-`dimensions` / Gemini `outputDimensionality`):
-
-```ts
-await registry.embedMany("openai", texts, {
-  model: "text-embedding-3-large",
-  dimensions: 256,
-});
-```
-
-OpenAI reports token `usage` (priced through the same cost layer — embedding models
-are in the registry, billed on input only); Google's embedding endpoint reports none,
-so `usage` is omitted there.
-
-### Structured output
-
-Pass `responseFormat` with a **plain JSON Schema** (no Zod, no runtime
-dependency) to constrain a single provider's output. The model returns JSON in
-`text`, and `complete()` also gives you the parsed value on `result.parsed`:
-
-```ts
-const result = await registry.select("openai").complete({
-  messages: [{ role: "user", content: "Where is the Eiffel Tower?" }],
-  responseFormat: {
-    type: "json_schema",
-    schema: {
-      type: "object",
-      properties: { city: { type: "string" }, country: { type: "string" } },
-      required: ["city", "country"],
-      additionalProperties: false,
-    },
-  },
-});
-
-const place = result.parsed as { city: string; country: string };
-// result.parsed is `undefined` if the output wasn't valid JSON; raw is in result.text.
-```
-
-Each provider maps the schema to its native mechanism. For one schema to work
-across all three, keep it simple: every object sets `additionalProperties: false`
-and every property is `required` with a single non-null `type`. Avoid
-optional/nullable fields, recursive schemas, `$ref`, and numeric/length
-constraints. (The [ensemble](#ensemble) strategy uses this same field across
-multiple models.)
-
-### Tool calling
-
-Declare `tools` and the model can ask to call them. When it does, `complete()`
-returns `result.toolCalls` (and `finishReason === "tool_use"`); you run the tools
-and feed the results back by appending the call and its result to the
-conversation, then call again. You own the loop.
-
-```ts
-const provider = registry.select("anthropic");
-const tools = [
-  {
-    name: "get_weather",
-    description: "Get the current weather for a city.",
-    parameters: {
-      type: "object",
-      properties: { city: { type: "string" } },
-      required: ["city"],
-      additionalProperties: false,
-    },
-  },
-];
-
-const messages = [{ role: "user", content: "What's the weather in Paris?" }];
-const first = await provider.complete({ messages, tools });
-
-if (first.toolCalls) {
-  messages.push({
-    role: "assistant",
-    content: first.toolCalls.map((call) => ({ type: "tool_use", ...call })),
-  });
-  messages.push({
-    role: "user",
-    content: first.toolCalls.map((call) => ({
-      type: "tool_result",
-      toolUseId: call.id,
-      name: call.name, // Gemini matches results by name
-      content: runTool(call.name, call.input), // your code; returns a string
-    })),
-  });
-
-  const final = await provider.complete({ messages, tools });
-  console.log(final.text);
-}
-```
-
-- **`input` is always a parsed object** (OpenAI's JSON-string arguments are
-  parsed for you).
-- **Set both `toolUseId` and `name`** on a tool result for portability — OpenAI
-  matches by id, Gemini by name (each throws if its key is missing).
-- **`complete()`-only**, and intentionally **not** part of `combine()` (a
-  multi-model tool loop has no coherent shared state) — use `select()` for it.
-
-### Multimodal input
-
-A message's `content` can be a `ContentPart[]` carrying images and documents
-(PDFs) alongside text, as base64 bytes or a URL:
-
-```ts
-await registry.select("anthropic").complete({
-  messages: [
-    {
-      role: "user",
-      content: [
-        { type: "text", text: "What's in this image?" },
-        {
-          type: "image",
-          source: { kind: "base64", mediaType: "image/png", data: pngBase64 },
-        },
-      ],
-    },
-  ],
-});
-```
-
-A `ContentPart` is a `TextPart`, `ImagePart`, or `FilePart`; `source` is either
-`{ kind: "base64"; mediaType; data }` or `{ kind: "url"; url; mediaType? }`.
-Provider support varies — OpenAI's Chat Completions has no URL file source, and
-Gemini resolves a URL only from a Files API / `gs://` URI — so prefer base64 for
-portability. The mapper throws on an unsupported combination.
-
-### Error handling
-
-A failed call rejects (`complete()`) or throws on the first iteration
-(`stream()`) with a `ProviderError` — branch on its fields rather than the
-message string:
-
-| Field      | Type                     | Notes                                                                               |
-| ---------- | ------------------------ | ----------------------------------------------------------------------------------- |
-| `kind`     | `"api"` \| `"transport"` | `"api"` = the provider returned an error; `"transport"` = the request never landed. |
-| `provider` | `ProviderName`           | Which provider failed.                                                              |
-| `status`   | `number \| undefined`    | HTTP status for `kind: "api"`; `undefined` for transport failures.                  |
-| `code`     | `string \| undefined`    | Machine code from the body, where the provider sends one.                           |
-| `type`     | `string \| undefined`    | Error category from the body.                                                       |
-| `body`     | `string \| undefined`    | The raw error body, for `kind: "api"`.                                              |
-| `cause`    | `unknown`                | The underlying `fetch` rejection, for `kind: "transport"`.                          |
-
-```ts
-import { ProviderError } from "combined-ai";
-
-try {
-  const result = await provider.complete({ messages });
-} catch (err) {
-  if (err instanceof ProviderError) {
-    if (err.status === 401) throw err; // bad key — unrecoverable
-    if (err.kind === "transport") {
-      /* never reached the provider */
-    }
-  }
-  throw err;
-}
-```
-
-`complete()` also throws (`kind: "api"`, `status: 200`) if a provider or proxy
-returns HTTP 200 with an `{ error }` body, rather than yielding a silently empty
-result. For `combine()`, individual provider failures are recorded rather than
-thrown — see [Reading the result](#reading-the-result).
-
-### Retries & cancellation
-
-Each provider automatically retries the routine retryable statuses — **429**,
-**503**, and **529** — with bounded exponential backoff (honoring `Retry-After`),
-for both `complete()` and `stream()`. Transport failures are **not** retried.
-Configure per provider with `retry` (defaults: 2 retries, 500ms base); set
-`maxRetries: 0` to disable.
-
-```ts
-new ProviderRegistry({
-  anthropic: { apiKey: key, retry: { maxRetries: 4, baseDelayMs: 1000 } },
-  openai: { apiKey: key, retry: { maxRetries: 0 } }, // no retry
-});
-```
-
-Override the retry **per call** with `request.retry` — it merges field-by-field over
-the provider's, so you can tune one knob (and `{ maxRetries: 0 }` disables retry for
-just that call while keeping the provider's `baseDelayMs`):
-
-```ts
-await provider.complete({ messages, retry: { maxRetries: 5 } });
-```
-
-Pass a `signal` to bound or cancel a call, or set `timeoutMs` for a wall-clock
-deadline (sugar for combining your `signal` with `AbortSignal.timeout(ms)`). Both
-reject an expired/aborted call with a transport `ProviderError` whose `cause` is the
-abort reason — a `TimeoutError` for `timeoutMs`, so a timeout is distinguishable. A
-`timeoutMs` bounds the **whole call**: every retry attempt, the backoff between them,
-and (for `stream()`) the full body read.
-
-```ts
-await provider.complete({ messages, timeoutMs: 30_000 });
-// equivalent to: signal: AbortSignal.timeout(30_000)
-```
-
-`retry` and `timeoutMs` (like `signal`) flow through `combine()` and `fallback()` to
-every underlying provider call. Note the split: a `signal` bounds the **whole run**
-(one signal cancels a combine or a fallback chain), whereas `timeoutMs` bounds **each
-provider call** — in a multi-phase combine or a fallback chain the worst-case latency
-is roughly `calls × timeoutMs`, so use `signal` (e.g. `AbortSignal.timeout(ms)`) for a
-run-wide budget.
-
-### Fallback chains
-
-`registry.fallback(specs)` returns a `Provider` that tries providers in order,
-catching a `ProviderError` and moving to the next when one is down, rate-limited
-past its retries, or otherwise failing. It pairs with the per-provider retry above
-(each entry still retries its routine statuses before the chain moves on) and, being
-a plain `Provider`, works via `.complete()`/`.stream()` and can even be registered as
-a [custom provider](#custom--gateway-providers).
-
-```ts
-const resilient = registry.fallback(["openai", "anthropic"]);
-const result = await resilient.complete({ messages }); // openai, then anthropic on failure
-```
-
-A `spec` is a bare provider name (its default model) or `{ provider, model?, maxTokens? }`.
-Per-entry `model`/`maxTokens` override the per-call request (entry → request → provider
-default). **For a mixed-provider chain, set `model` per entry — not on the request** — since
-one `request.model` can't be forwarded to a different provider:
-
-```ts
-registry.fallback([
-  { provider: "openai", model: "gpt-5.4" },
-  { provider: "anthropic", model: "claude-opus-4-8" },
-]);
-```
-
-When **every** provider fails, `fallback` throws an `AggregateError` whose `.errors`
-holds each `ProviderError`. Aborting the request's `signal` propagates immediately
-without trying the rest of the chain (the signal is a whole-chain budget); a per-call
-`timeoutMs`, by contrast, applies to **each entry**, so a slow provider times out and
-the chain advances to the next (each entry gets a fresh deadline). `stream()` falls
-back only **before the first delta** — once a delta is emitted the chain is committed
-to that provider and any later error propagates unchanged.
-
-By default it falls back on any non-abort `ProviderError`. Because a different provider
-may accept a request the first rejected (e.g. differing structured-output schema rules),
-even a `4xx` triggers fallback — so a genuinely unrecoverable error (a bad key, a
-malformed request) is only surfaced after the whole chain is exhausted. Pass
-`shouldFallback` to stop early on those, and `onFallback` to observe each advance:
-
-```ts
-registry.fallback(["openai", "anthropic"], {
-  shouldFallback: ({ error }) => error.status !== 401, // don't retry a bad key elsewhere
-  onFallback: ({ provider, error }) =>
-    console.warn(`${provider} failed (${error.status}), falling back`),
-});
-```
-
-> The returned provider has no `embed` — fallback is completion routing, and embeddings
-> from different providers/models aren't comparable. Note also that a fully-unavailable
-> chain serializes each provider's retry backoff, so worst-case failover latency grows
-> with the chain length.
-
-## Testing
-
-A network-free `MockProvider` is published on the `combined-ai/test` subpath, so
-you can test provider selection and `combine` orchestration without making (paid)
-API calls. It satisfies the `Provider` contract, records every call, and simulates
-streaming by splitting the response text into deltas.
-
-```ts
-import { MockProvider, ProviderError } from "combined-ai/test";
-
-// A canned completion (a bare string is shorthand for `{ text }`).
-const mock = new MockProvider({ response: "42" });
-await mock.complete({ messages }); // → { text: "42", model: "mock-model" }
-for await (const delta of mock.stream({ messages })) {
-  /* "42" arrives as word-ish deltas */
-}
-mock.calls; // every request passed in, for assertions
-
-// A scripted sequence (one per call; throws when exhausted), or a per-call
-// function for phase-aware fakes. Return/throw an Error to simulate a failure —
-// e.g. drive retry/fallback logic with a real ProviderError.
-new MockProvider({ response: ["first", "second"] });
-new MockProvider({ response: (request, index) => `answer #${index}` });
-new MockProvider({
-  response: new ProviderError("rate limited", {
-    provider: "mock",
-    kind: "api",
-    status: 429,
-  }),
-});
-
-// A Partial<CompletionResult> passes usage/finishReason/parsed/toolCalls through;
-// pass `embed` to opt into embeddings. Register it like any custom provider:
-const registry = new ProviderRegistry({
-  custom: {
-    a: {
-      kind: "provider",
-      provider: new MockProvider({ response: "answer-a" }),
-    },
-    b: {
-      kind: "provider",
-      provider: new MockProvider({ response: "answer-b" }),
-    },
-  },
-});
-await registry.consensus({ messages, participants: ["a", "b"] });
-```
-
-Import `ProviderError` from `combined-ai/test` (not the main entry) when you need
-`instanceof` to hold against errors thrown by a `MockProvider`. Subpath types
-resolve under `moduleResolution` `bundler`/`node16`/`nodenext` (they read the
-package's `exports` map).
+A custom name that collides with a built-in throws at construction. Custom
+providers work everywhere a built-in does.
+
+For **request/result fields, structured output, tool calling, multimodal input,
+and embeddings**, see the [Single-provider reference](./docs/single-provider.md).
+
+## Reference documentation
+
+Deep-dive pages under [`docs/`](./docs/):
+
+- **[Combine strategies](./docs/strategies.md)** — per-strategy behavior, semantic
+  comparison, per-participant models, reading results, and progress events.
+- **[Single-provider reference](./docs/single-provider.md)** — request/result
+  fields, structured output, tool calling, multimodal input, embeddings.
+- **[Cost, pricing & caching](./docs/cost-and-caching.md)** — `costOf`,
+  `combineCost`, budgets, and Anthropic prompt caching.
+- **[Errors, retries & fallback](./docs/errors-retries-fallback.md)** —
+  `ProviderError`, retry/timeout behavior, and fallback chains.
+- **[Testing](./docs/testing.md)** — the network-free `MockProvider` on the
+  `combined-ai/test` subpath.
 
 ## Public API
 
 Exported from the package entry point:
 
-- `ProviderRegistry` — the single entry point: `select()`, `fallback()`, the
-  strategy dispatcher `combine()`, the per-strategy methods `consensus()`,
-  `pipeline()`, `ensemble()`, `broadcast()`, and the embedding methods
-  `embed()` / `embedMany()`.
+- `ProviderRegistry` — the single entry point: `select()`, `has()`, `names()`,
+  `fallback()`, the strategy dispatcher `combine()`, the per-strategy methods
+  `consensus()`, `pipeline()`, `ensemble()`, `broadcast()`, `panel()`, and the
+  embedding methods `embed()` / `embedMany()`.
 - Config types: `ProviderRegistryConfig`, `ProviderName`, `BuiltInProviderName`,
   `CustomProviderConfig`, `CustomProviderInstance`, `OpenAICompatibleConfig`,
   `AnthropicProviderOptions`, `OpenAIProviderOptions`, `GoogleProviderOptions`,
@@ -1115,63 +352,30 @@ Exported from the package entry point:
 - Contract types: `Provider`, `Message`, `Role`, `ContentPart`, `TextPart`,
   `ImagePart`, `FilePart`, `MediaSource`, `ToolUsePart`, `ToolResultPart`,
   `CompletionRequest`, `CompletionResult`, `ResponseFormat`, `ToolDefinition`,
-  `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`, `EmbeddingRequest`,
-  `EmbeddingOptions`, `EmbeddingResult`.
+  `ToolChoice`, `ToolCall`, `FinishReason`, `Usage`, `CacheControl`,
+  `SystemPrompt`, `EmbeddingRequest`, `EmbeddingOptions`, `EmbeddingResult`.
 - Combine request types: `CombineRequest` (the dispatcher's broad type),
   `CombineRequestBase`, and the per-strategy `ConsensusRequest`,
   `PipelineRequest`, `EnsembleRequest` (`responseFormat` required),
   `BroadcastRequest`, `PanelRequest`; plus `ParticipantSpec`.
 - Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
-  `EnsembleResult` | `BroadcastResult` | `PanelResult`), `EnsembleAgreement`, `SemanticComparison`,
-  `CombineUsage`, `CallUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
-  `CombineBudget`, `CombineEmbedding`, `CombineEvent`, and the strategy-generic
-  utilities `StrategyRequest<S>` / `ResultFor<S>`.
+  `EnsembleResult` | `BroadcastResult` | `PanelResult`), `EnsembleAgreement`,
+  `SemanticComparison`, `CombineUsage`, `CallUsage`, `ParticipantOutcome`,
+  `StrategyName`, `CombineOptions`, `CombineBudget`, `CombineEmbedding`,
+  `CombineEvent`, and the strategy-generic utilities `StrategyRequest<S>` /
+  `ResultFor<S>`.
 - `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
 - Fallback types: `FallbackSpec`, `FallbackOptions`, `FallbackEvent`.
-- Cost & pricing: `costOf`, `costOfUsage`, `combineCost`, `findModel`, `listModels`,
-  `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`, `CostOptions`,
-  `ModelInfo`, `ModelPricing` (types).
+- Cost & pricing: `costOf`, `costOfUsage`, `combineCost`, `findModel`,
+  `listModels`, `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`,
+  `CostOptions`, `ModelInfo`, `ModelPricing` (types).
 - Embeddings: `cosineSimilarity` (value).
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GoogleProvider`) are **not** exported — the registry constructs them internally.
-
 The `combined-ai/test` subpath additionally exports `MockProvider` (plus
 `MockProviderOptions`, `MockResponse`, `MockResponder`) and re-exports
-`ProviderError` — see [Testing](#testing).
-
-## Development
-
-Uses **Yarn 4 (Plug'n'Play)** — always use `yarn`, never `npm`, for local work.
-
-```bash
-yarn build              # bundle to dist/ (ESM + CJS + types) via tsup
-yarn typecheck          # tsc --noEmit
-yarn test               # Jest (mocked unit tests; never makes network calls)
-yarn test:integration   # live API tests — see below
-yarn lint               # ESLint
-yarn format             # Prettier --write
-```
-
-### Live integration tests
-
-`yarn test:integration` runs tests against the real provider APIs. They are
-double-gated and skipped by default — each provider's suite runs only when both
-`RUN_LIVE_TESTS=1` (set by the script) and that provider's key are present
-(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`). To enable them:
-
-```bash
-cp .env.example .env
-# edit .env and set your key(s)
-yarn test:integration                       # all integration tests
-yarn test:integration openai.integration     # just one provider's suite
-yarn test:integration consensus.integration  # a combine suite (needs all three keys)
-```
-
-The combine suites (`consensus.integration`, `pipeline.integration`,
-`ensemble.integration`, `broadcast.integration`) are **triple-gated** on all
-three keys, since they exercise the full multi-model flow. Live tests use cheap models and a small token
-cap, so cost is negligible. `.env` is gitignored and loaded automatically.
+`ProviderError` — see [Testing](./docs/testing.md).
 
 ## Roadmap
 
@@ -1179,10 +383,18 @@ Planned, roughly in priority order (subject to change):
 
 - **Token counting** before send.
 - **Streaming in `combine`** — incremental progress across phases.
-- **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no added dependency.
+- **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no
+  added dependency.
 - **Minority-veto consensus** policy.
-- **More providers** — Amazon Bedrock (distinct API, enterprise reach); possibly Azure OpenAI. (OpenAI-compatible APIs are already supported via custom providers.)
-- **Model capability metadata** — extend the registry with per-model `contextWindow`, `maxOutputTokens`, `supportsVision`, `supportsTools`.
+- **More providers** — Amazon Bedrock; possibly Azure OpenAI. (OpenAI-compatible
+  APIs are already supported via custom providers.)
+- **Model capability metadata** — per-model `contextWindow`, `maxOutputTokens`,
+  `supportsVision`, `supportsTools`.
+
+## Contributing & development
+
+Build/test/lint setup, the development loop, and the live integration-test gating
+live in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Changelog
 
@@ -1192,5 +404,3 @@ Notable changes are recorded in [CHANGELOG.md](./CHANGELOG.md), following the
 ## License
 
 [MIT](./LICENSE) © Anders Jansson
-</content>
-</invoke>

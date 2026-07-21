@@ -158,7 +158,8 @@ Most of this is enforced by ESLint + Prettier; the highlights:
 
 ## Documentation & changelog
 
-- Keep the **`README.md`** current when you change public behavior.
+- Keep the **`README.md`** (and the relevant page under **`docs/`**) current when
+  you change public behavior.
 - Record notable changes in **`CHANGELOG.md`** under `## [Unreleased]`, following
   the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format
   (`### Added` / `### Changed` / `### Fixed`). Dated version headings are added
