@@ -10,8 +10,8 @@ fallback chains.
 ## Error handling
 
 A failed call rejects (`complete()`) or throws on the first iteration
-(`stream()`) with a `ProviderError` — branch on its fields rather than the
-message string:
+(`stream()`) with a `ProviderError`. Branch on its fields rather than the message
+string:
 
 | Field      | Type                     | Notes                                                                               |
 | ---------- | ------------------------ | ----------------------------------------------------------------------------------- |
@@ -40,17 +40,17 @@ try {
 ```
 
 `complete()` also throws (`kind: "api"`, `status: 200`) if a provider or proxy
-returns HTTP 200 with an `{ error }` body, rather than yielding a silently empty
-result. For `combine()`, individual provider failures are recorded rather than
-thrown — see [Reading the result](./strategies.md#reading-the-result).
+returns HTTP 200 with an `{ error }` body, rather than yielding an empty result.
+For `combine()`, the run records individual provider failures rather than
+throwing; see [Reading the result](./strategies.md#reading-the-result).
 
 ## Retries & cancellation
 
-Each provider automatically retries the routine retryable statuses — **429**,
-**503**, and **529** — with bounded exponential backoff (honoring `Retry-After`),
-for both `complete()` and `stream()`. Transport failures are **not** retried.
-Configure per provider with `retry` (defaults: 2 retries, 500ms base); set
-`maxRetries: 0` to disable.
+Each provider retries the routine retryable statuses (**429**, **503**, and
+**529**) with bounded exponential backoff (honoring `Retry-After`), for both
+`complete()` and `stream()`. It does not retry transport failures. Configure per
+provider with `retry` (defaults: 2 retries, 500ms base); set `maxRetries: 0` to
+disable.
 
 ```ts
 new ProviderRegistry({
@@ -59,9 +59,9 @@ new ProviderRegistry({
 });
 ```
 
-Override the retry **per call** with `request.retry` — it merges field-by-field
+Override the retry **per call** with `request.retry`: it merges field-by-field
 over the provider's, so you can tune one knob (and `{ maxRetries: 0 }` disables
-retry for just that call while keeping the provider's `baseDelayMs`):
+retry for that call alone while keeping the provider's `baseDelayMs`):
 
 ```ts
 await provider.complete({ messages, retry: { maxRetries: 5 } });
@@ -70,9 +70,9 @@ await provider.complete({ messages, retry: { maxRetries: 5 } });
 Pass a `signal` to bound or cancel a call, or set `timeoutMs` for a wall-clock
 deadline (sugar for combining your `signal` with `AbortSignal.timeout(ms)`). Both
 reject an expired/aborted call with a transport `ProviderError` whose `cause` is
-the abort reason — a `TimeoutError` for `timeoutMs`, so a timeout is
-distinguishable. A `timeoutMs` bounds the **whole call**: every retry attempt, the
-backoff between them, and (for `stream()`) the full body read.
+the abort reason (a `TimeoutError` for `timeoutMs`, so you can tell a timeout
+apart). A `timeoutMs` bounds the **whole call**: every retry attempt, the backoff
+between them, and (for `stream()`) the full body read.
 
 ```ts
 await provider.complete({ messages, timeoutMs: 30_000 });
@@ -80,10 +80,10 @@ await provider.complete({ messages, timeoutMs: 30_000 });
 ```
 
 `retry` and `timeoutMs` (like `signal`) flow through `combine()` and `fallback()`
-to every underlying provider call. Note the split: a `signal` bounds the **whole
-run** (one signal cancels a combine or a fallback chain), whereas `timeoutMs`
-bounds **each provider call**. For a run-wide deadline across a multi-phase
-combine or a fallback chain, use `signal` (e.g. `AbortSignal.timeout(ms)`).
+to every underlying provider call. The split: a `signal` bounds the **whole run**
+(one signal cancels a combine or a fallback chain), whereas `timeoutMs` bounds
+**each provider call**. For a run-wide deadline across a multi-phase combine or a
+fallback chain, use `signal` (e.g. `AbortSignal.timeout(ms)`).
 
 ## Fallback chains
 
@@ -102,8 +102,8 @@ const result = await resilient.complete({ messages }); // openai, then anthropic
 A `spec` is a bare provider name (its default model) or
 `{ provider, model?, maxTokens? }`. Per-entry `model`/`maxTokens` override the
 per-call request (entry → request → provider default). **For a mixed-provider
-chain, set `model` per entry — not on the request** — since one `request.model`
-can't be forwarded to a different provider:
+chain, set `model` per entry rather than on the request**, since one
+`request.model` can't be forwarded to a different provider:
 
 ```ts
 registry.fallback([
@@ -114,18 +114,17 @@ registry.fallback([
 
 When **every** provider fails, `fallback` throws an `AggregateError` whose
 `.errors` holds each `ProviderError`. Aborting the request's `signal` propagates
-immediately without trying the rest of the chain; a per-call `timeoutMs`, by
-contrast, applies to **each entry**, so a slow provider times out and the chain
-advances to the next. `stream()` falls back only **before the first delta** —
-once a delta is emitted the chain is committed to that provider and any later
-error propagates unchanged.
+at once without trying the rest of the chain; a per-call `timeoutMs`, by contrast,
+applies to **each entry**, so a slow provider times out and the chain advances to
+the next. `stream()` falls back only **before the first delta**: after a delta is
+emitted the chain commits to that provider and any later error propagates
+unchanged.
 
-By default it falls back on any non-abort `ProviderError` — even a `4xx`, since a
+By default it falls back on any non-abort `ProviderError`, even a `4xx`, since a
 different provider may accept a request the first rejected (e.g. differing
-structured-output schema rules). That means a genuinely unrecoverable error (a
-bad key, a malformed request) is only surfaced after the whole chain is
-exhausted. Pass `shouldFallback` to stop early on those, and `onFallback` to
-observe each advance:
+structured-output schema rules). So an unrecoverable error (a bad key, a malformed
+request) surfaces only after the whole chain is exhausted. Pass `shouldFallback`
+to stop early on those, and `onFallback` to observe each advance:
 
 ```ts
 registry.fallback(["openai", "anthropic"], {
@@ -135,7 +134,7 @@ registry.fallback(["openai", "anthropic"], {
 });
 ```
 
-> The returned provider has no `embed` — fallback is completion routing, and
-> embeddings from different providers/models aren't comparable. Note also that a
-> fully-unavailable chain serializes each provider's retry backoff, so worst-case
+> The returned provider has no `embed`: fallback is completion routing, and
+> embeddings from different providers/models aren't comparable. A chain where every
+> provider is unavailable serializes each provider's retry backoff, so worst-case
 > failover latency grows with the chain length.

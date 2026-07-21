@@ -1,9 +1,9 @@
 # Testing with MockProvider
 
-A network-free `MockProvider` is published on the `combined-ai/test` subpath, so
-you can test provider selection and `combine` orchestration without making (paid)
-API calls. It satisfies the `Provider` contract, records every call, and
-simulates streaming by splitting the response text into deltas.
+combined-ai publishes a network-free `MockProvider` on the `combined-ai/test`
+subpath, so you can test provider selection and `combine` orchestration without
+making (paid) API calls. It satisfies the `Provider` contract, records every call,
+and simulates streaming by splitting the response text into deltas.
 
 ```ts
 import { MockProvider, ProviderError } from "combined-ai/test";

@@ -6,10 +6,10 @@
 
 **Multi-model consensus, pipeline, ensemble, broadcast, and panel for TypeScript.**
 
-Most AI libraries hand you one model at a time. combined-ai makes several models
-**work together on a single prompt** — consensus, sequential refinement, a vote
-on structured output, a role-based expert panel, or a plain fan-out that returns
-every model's answer — behind one tiny interface. Single-provider calls
+Most AI libraries hand you one model at a time. combined-ai puts several models
+to **work together on a single prompt** behind one small interface: consensus,
+sequential refinement, a vote on structured output, a role-based expert panel, or
+a plain fan-out that returns every model's answer. Single-provider calls
 (`complete`/`stream`) are included too.
 
 ```ts
@@ -39,13 +39,13 @@ npm install combined-ai
 
 Requires **Node.js ≥ 20.3** (uses the global `fetch`/`ReadableStream`/`AbortSignal.any`).
 The published package is dual ESM + CJS with TypeScript types, so any package
-manager works as a consumer. The library **never reads environment variables** —
-you always pass API keys in explicitly via the registry config.
+manager works as a consumer. The library **never reads environment variables**.
+You pass API keys via the registry config.
 
 ## Contents
 
 - [Why combine?](#why-combine)
-- [Combining providers](#combining-providers) — the five strategies
+- [Combining providers](#combining-providers): the five strategies
 - [Single-provider usage](#single-provider-usage)
 - [Reference documentation](#reference-documentation) (deep-dive pages)
 - [Public API](#public-api)
@@ -79,8 +79,8 @@ const result = await registry.combine({
 ```
 
 `combine()` accepts the same request fields as `complete()` (`messages`,
-`system`, `model`, `maxTokens`, `signal`, `retry`, `timeoutMs`) — applied to every
-participant unless a participant overrides them — plus:
+`system`, `model`, `maxTokens`, `signal`, `retry`, `timeoutMs`), applied to every
+participant unless a participant overrides them, plus:
 
 | Field             | Type                                                                        | Notes                                                                                                    |
 | ----------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -92,11 +92,11 @@ participant unless a participant overrides them — plus:
 | `crossExamine`    | `boolean`                                                                   | _Panel only._ Run a review round before synthesis (default `false`).                                     |
 | `responseFormat`  | `ResponseFormat`                                                            | _Ensemble only (required there)._ The shared JSON Schema every model answers under.                      |
 
-**Two ways to call it.** Use a per-strategy method — `registry.consensus(req)`,
-`.pipeline(req)`, `.ensemble(req)`, `.broadcast(req)`, `.panel(req)` — to get that
-strategy's **concrete** result type, or the generic `registry.combine(request)`
-dispatcher (which returns the concrete type for a literal `strategy` and the
-`CombineResult` union for a dynamic one). Both share one engine and the same
+**Two ways to call it.** A per-strategy method (`registry.consensus(req)`,
+`.pipeline(req)`, `.ensemble(req)`, `.broadcast(req)`, `.panel(req)`) returns that
+strategy's **concrete** result type. The generic `registry.combine(request)`
+dispatcher returns the concrete type for a literal `strategy`, and the
+`CombineResult` union for a dynamic one. Both share one engine and the same
 validation.
 
 ### Consensus
@@ -137,9 +137,9 @@ console.log(result.finalParticipant); // id of the last stage that produced one
 
 ### Ensemble
 
-A multi-model vote on **structured output** — the thing one provider can't give
-you. Every participant answers under the same JSON Schema, the typed objects are
-merged **mechanically** (no model adjudicates), and you get an **agreement score**.
+A multi-model vote on **structured output**, which one provider can't give you.
+Every participant answers under the same JSON Schema; the library merges the typed
+objects **mechanically** (no model adjudicates) and returns an **agreement score**.
 
 ```ts
 const result = await registry.ensemble({
@@ -166,9 +166,8 @@ console.log(result.agreement.byField); // e.g. { city: 1, country: 0.67 }
 ### Broadcast
 
 The simplest strategy: send the prompt to every participant in parallel and get
-**all** of their answers back, unchanged. No critique, synthesis, or vote — use
-it to compare models side by side or drive your own selection over the raw
-outputs.
+**all** of their answers back, unchanged. No critique, synthesis, or vote. Use it
+to compare models side by side or drive your own selection over the raw outputs.
 
 ```ts
 const result = await registry.broadcast({
@@ -183,7 +182,7 @@ for (const response of result.responses) {
 }
 ```
 
-`BroadcastResult` has **no `text`** field — read `result.responses`.
+`BroadcastResult` has **no `text`** field; read `result.responses`.
 
 → [Broadcast details](./docs/strategies.md#broadcast)
 
@@ -226,11 +225,11 @@ Every outcome carries both an `id` (the participant label) and `provider` (the
 actual provider it ran on); `result.usage` aggregates token usage across **every**
 model call the run made. `text` is present on every strategy **except** broadcast.
 
-**Partial failures are tolerated.** A participant that errors — or returns empty/
-invalid output — is recorded in the result and dropped from the rest of the round;
-the run proceeds with the survivors and throws only when too few remain. `combine()`
-also validates the request up front (participants, unique ids, non-empty messages,
-`responseFormat` for ensemble, …).
+**Partial failures are tolerated.** `combine()` records a participant that errors
+(or returns empty/invalid output), drops it from the rest of the round, and
+proceeds with the survivors; it throws only when too few remain. It also validates
+the request up front (participants, unique ids, non-empty messages,
+`responseFormat` for ensemble, and so on).
 
 For the full result-narrowing guide, per-participant models, progress events, and
 the optional **semantic-agreement** signals (`embedding` option), see
@@ -240,9 +239,8 @@ the optional **semantic-agreement** signals (`embedding` option), see
 ## Single-provider usage
 
 The same registry talks to one provider at a time. Every provider implements one
-contract, so the calling code is identical whichever you pick. The concrete
-provider classes are intentionally not exported — you never construct them
-yourself.
+contract, so the calling code is identical whichever you pick. The registry keeps
+the concrete provider classes internal; you never construct them yourself.
 
 ```ts
 const provider = registry.select("anthropic"); // throws if not configured
@@ -261,8 +259,7 @@ for await (const delta of provider.stream({
 }
 ```
 
-You can also inspect what's configured — `registry.has("openai")` and
-`registry.names()`.
+Inspect what's configured with `registry.has("openai")` and `registry.names()`.
 
 ### Provider configuration
 
@@ -293,10 +290,10 @@ new ProviderRegistry({
 Beyond the three built-ins you can register extra providers under names you
 choose, via a `custom` map:
 
-- **`openai-compatible`** — point the OpenAI provider at any Chat Completions
+- **`openai-compatible`**: point the OpenAI provider at any Chat Completions
   endpoint (OpenRouter, Together, Groq, Ollama, a local server, …). `baseUrl`
   (excluding the request path) and `model` are required; `headers`/`retry` optional.
-- **`provider`** — bring your own object implementing the `Provider` interface.
+- **`provider`**: bring your own object implementing the `Provider` interface.
 
 ```ts
 const registry = new ProviderRegistry({
@@ -326,22 +323,22 @@ and embeddings**, see the [Single-provider reference](./docs/single-provider.md)
 
 Deep-dive pages under [`docs/`](./docs/):
 
-- **[Combine strategies](./docs/strategies.md)** — per-strategy behavior, semantic
+- **[Combine strategies](./docs/strategies.md)**: per-strategy behavior, semantic
   comparison, per-participant models, reading results, and progress events.
-- **[Single-provider reference](./docs/single-provider.md)** — request/result
+- **[Single-provider reference](./docs/single-provider.md)**: request/result
   fields, structured output, tool calling, multimodal input, embeddings.
-- **[Cost, pricing & caching](./docs/cost-and-caching.md)** — `costOf`,
+- **[Cost, pricing & caching](./docs/cost-and-caching.md)**: `costOf`,
   `combineCost`, budgets, and Anthropic prompt caching.
-- **[Errors, retries & fallback](./docs/errors-retries-fallback.md)** —
+- **[Errors, retries & fallback](./docs/errors-retries-fallback.md)**:
   `ProviderError`, retry/timeout behavior, and fallback chains.
-- **[Testing](./docs/testing.md)** — the network-free `MockProvider` on the
+- **[Testing](./docs/testing.md)**: the network-free `MockProvider` on the
   `combined-ai/test` subpath.
 
 ## Public API
 
 Exported from the package entry point:
 
-- `ProviderRegistry` — the single entry point: `select()`, `has()`, `names()`,
+- `ProviderRegistry`: the single entry point, with `select()`, `has()`, `names()`,
   `fallback()`, the strategy dispatcher `combine()`, the per-strategy methods
   `consensus()`, `pipeline()`, `ensemble()`, `broadcast()`, `panel()`, and the
   embedding methods `embed()` / `embedMany()`.
@@ -364,7 +361,7 @@ Exported from the package entry point:
   `StrategyName`, `CombineOptions`, `CombineBudget`, `CombineEmbedding`,
   `CombineEvent`, and the strategy-generic utilities `StrategyRequest<S>` /
   `ResultFor<S>`.
-- `ProviderError` (a value — usable with `instanceof`) and `ProviderErrorKind`.
+- `ProviderError` (a value, usable with `instanceof`) and `ProviderErrorKind`.
 - Fallback types: `FallbackSpec`, `FallbackOptions`, `FallbackEvent`.
 - Cost & pricing: `costOf`, `costOfUsage`, `combineCost`, `findModel`,
   `listModels`, `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`,
@@ -372,23 +369,23 @@ Exported from the package entry point:
 - Embeddings: `cosineSimilarity` (value).
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
-`GoogleProvider`) are **not** exported — the registry constructs them internally.
+`GoogleProvider`) are **not** exported; the registry constructs them internally.
 The `combined-ai/test` subpath additionally exports `MockProvider` (plus
 `MockProviderOptions`, `MockResponse`, `MockResponder`) and re-exports
-`ProviderError` — see [Testing](./docs/testing.md).
+`ProviderError` (see [Testing](./docs/testing.md)).
 
 ## Roadmap
 
-Planned, roughly in priority order (subject to change):
+Planned, in rough priority order (subject to change):
 
 - **Token counting** before send.
-- **Streaming in `combine`** — incremental progress across phases.
-- **Standard Schema support** — pass Zod/Valibot/etc. for structured output, no
+- **Streaming in `combine`**: incremental progress across phases.
+- **Standard Schema support**: pass Zod/Valibot/etc. for structured output, no
   added dependency.
 - **Minority-veto consensus** policy.
-- **More providers** — Amazon Bedrock; possibly Azure OpenAI. (OpenAI-compatible
-  APIs are already supported via custom providers.)
-- **Model capability metadata** — per-model `contextWindow`, `maxOutputTokens`,
+- **More providers**: Amazon Bedrock; possibly Azure OpenAI. (OpenAI-compatible
+  APIs are supported today via custom providers.)
+- **Model capability metadata**: per-model `contextWindow`, `maxOutputTokens`,
   `supportsVision`, `supportsTools`.
 
 ## Contributing & development
@@ -398,7 +395,7 @@ live in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Changelog
 
-Notable changes are recorded in [CHANGELOG.md](./CHANGELOG.md), following the
+See [CHANGELOG.md](./CHANGELOG.md) for notable changes, following the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## License

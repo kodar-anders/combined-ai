@@ -22,17 +22,17 @@ if (cost) console.log(`$${cost.totalCost.toFixed(4)}`);
 ```
 
 It returns `undefined` (never throws) when the model isn't in the registry or the
-result carries no `usage` — both normal for custom/gateway providers.
+result carries no `usage`; both are normal for custom/gateway providers.
 `costOfUsage(usage, model)` is the same calculation from a raw `Usage` + model id.
 
 The registry resolves dated snapshots and Gemini `modelVersion` strings to their
 base entry (e.g. `gpt-4.1-2025-04-14` → `gpt-4.1`). Costs are raw floating-point
-USD — round at display.
+USD; round at display.
 
 **Prices are best-effort and hand-maintained** (a small table of the most common
 models across the three providers, not an exhaustive catalog), dated by
 `PRICING_VERIFIED_ON`. Correct a stale price or add your own model with
-`options.models` — no library release needed:
+`options.models`, no library release needed:
 
 ```ts
 costOf(result, {
@@ -56,16 +56,16 @@ const cost = combineCost(result); // { totalCost, byParticipant } in USD, or und
 ```
 
 It returns `undefined` when nothing is priceable (no usage, or every call's model
-is unknown to the registry). Calls whose model the registry doesn't know are
-skipped, so `totalCost` can understate a mixed run — pass `options.models` (the
-same override as `costOf`) to price custom-provider models.
+is unknown to the registry). It skips calls whose model the registry doesn't know,
+so `totalCost` can understate a mixed run; pass `options.models` (the same override
+as `costOf`) to price custom-provider models.
 
-Pass a **budget** to cap spend. It's a best-effort _soft floor on optional work_,
-not a hard cap: the phases required to produce an answer (consensus drafts +
-synthesis, the pipeline's first stage) always run, so realized cost can exceed
-it — but once the running cost crosses the ceiling, the run skips its _optional_
-phases (consensus critiques/sanitize, pipeline refiners/sanitize) and emits a
-`budget` event.
+Pass a **budget** to cap spend. It's a best-effort _soft floor on optional work_
+rather than a hard cap: the phases required to produce an answer (consensus drafts
+and synthesis, the pipeline's first stage) always run, so realized cost can exceed
+it. Once the running cost crosses the ceiling, the run skips its _optional_ phases
+(consensus critiques/sanitize, pipeline refiners/sanitize) and emits a `budget`
+event.
 
 ```ts
 await registry.combine(
@@ -74,16 +74,16 @@ await registry.combine(
 );
 ```
 
-Cost is priced with the built-in registry; pass `budget.models` to price custom
+The budget prices with the built-in registry; pass `budget.models` to price custom
 models (a call that can't be priced contributes 0, so a budget over an
 all-uncatalogued roster never triggers). Budget on the `ensemble`/`broadcast`
-strategies is accepted for a uniform API but **inert** — their single parallel
-fan-out has no later phase to pre-empt, so they emit no `budget` event; price a
+strategies is accepted for a uniform API but **inert**: their single parallel
+fan-out has no later phase to pre-empt, so they emit no `budget` event. Price a
 finished run with `combineCost(result)` instead.
 
 ## Prompt caching
 
-Prompt caching is reflected in dollars. `usage.inputTokens` is the total billable
+Prompt caching shows up in dollars. `usage.inputTokens` is the total billable
 prompt; `cachedInputTokens` (a discounted cache read) and
 `cacheCreationInputTokens` (an Anthropic cache write, billed at a premium) are
 subsets of it, set only when the provider reports them:
@@ -97,13 +97,14 @@ subsets of it, set only when the provider reports them:
 `costOf` bills reads at `cachedInputPerMTok` and writes at
 `cacheWriteInputPerMTok`, each falling back to the normal input rate when a model
 lists no cache rate (Anthropic and Gemini rates are built in; OpenAI falls back
-until added — supply it via `options.models`). Reporting is `complete()`-only
+until added, so supply it via `options.models`). Reporting is `complete()`-only
 (streaming reports no usage).
 
-To **enable** caching: OpenAI and Gemini 2.5 cache automatically, so reporting
-just works. Anthropic is manual — mark a cache breakpoint with `cacheControl` on a
-content part or on the system prompt's object form (Anthropic caches the prefix up
-to the marker and re-uses it at ~90% off on later requests with the same prefix):
+To **enable** caching: OpenAI and Gemini 2.5 cache on their own, so reporting works
+with no extra setup. Anthropic is manual. Mark a cache breakpoint with
+`cacheControl` on a content part or on the system prompt's object form (Anthropic
+caches the prefix up to the marker and re-uses it at ~90% off on later requests
+with the same prefix):
 
 ```ts
 await registry.select("anthropic").complete({
@@ -121,6 +122,6 @@ await registry.select("anthropic").complete({
 ```
 
 Omit `ttl` for the default 5-minute cache; `"1h"` opts into the 1-hour cache (the
-1-hour beta header is sent automatically). At most 4 breakpoints per request.
+library sends the 1-hour beta header for you). At most 4 breakpoints per request.
 OpenAI and Gemini ignore the marker; `combine` ignores it (its strategies build
 their own prompts). The relevant types are `CacheControl` and `SystemPrompt`.
