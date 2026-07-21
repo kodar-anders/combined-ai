@@ -32,6 +32,8 @@ import {
  * `id` is its unique label (surfaced in results/events); `providerName` is the
  * actual provider it runs on; `model`/`maxTokens` are its optional per-participant
  * overrides (applied by {@link completionFor}, falling back to the request's).
+ * `instruction` is an optional per-participant system prompt (a role/persona) used
+ * only by the `panel` strategy, which composes it into that phase's system prompt.
  */
 export type RosterEntry = {
   id: string;
@@ -39,6 +41,7 @@ export type RosterEntry = {
   provider: Provider;
   model?: string;
   maxTokens?: number;
+  instruction?: string;
 };
 
 /**
@@ -354,7 +357,7 @@ export type BudgetTracker = {
    * strategies gate uniformly without re-checking whether a budget was set.
    */
   gate: (
-    skipped: "critiques" | "refine" | "sanitize",
+    skipped: "critiques" | "refine" | "sanitize" | "reviews",
     extra?: { id?: string; index?: number },
   ) => boolean;
 };

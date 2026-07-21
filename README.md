@@ -4,13 +4,13 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520.3-339933.svg)](https://nodejs.org/)
 
-**Multi-model consensus, pipeline, ensemble, and broadcast for TypeScript.**
+**Multi-model consensus, pipeline, ensemble, broadcast, and panel for TypeScript.**
 
 Most AI libraries hand you one model at a time. combined-ai makes several models
 **work together on a single prompt** — consensus, sequential refinement, a vote
-on structured output, or a plain fan-out that returns every model's answer —
-behind one tiny interface. Single-provider calls (`complete`/`stream`) are
-included too.
+on structured output, a role-based expert panel, or a plain fan-out that returns
+every model's answer — behind one tiny interface. Single-provider calls
+(`complete`/`stream`) are included too.
 
 ```ts
 import { ProviderRegistry } from "combined-ai";
@@ -40,6 +40,7 @@ console.log(result.text);
   - [Pipeline](#pipeline)
   - [Ensemble](#ensemble)
   - [Broadcast](#broadcast)
+  - [Panel](#panel)
   - [Per-participant models](#per-participant-models)
   - [Reading the result](#reading-the-result)
   - [Progress events](#progress-events)
@@ -65,7 +66,7 @@ console.log(result.text);
 ## Why combine?
 
 A single model gives you one answer with no second opinion. combined-ai runs
-several models on the same prompt, with four strategies for four shapes of
+several models on the same prompt, with five strategies for five shapes of
 problem:
 
 | Strategy      | Shape                                         | Use it when…                                                    |
@@ -74,8 +75,9 @@ problem:
 | `"pipeline"`  | sequential refinement (a conveyor belt)       | each model should improve the previous one's answer in turn.    |
 | `"ensemble"`  | parallel structured answers → field-wise vote | you need extraction/classification **with a confidence score**. |
 | `"broadcast"` | parallel fan-out, every raw answer returned   | you want each model's answer side by side, with no combining.   |
+| `"panel"`     | role-based experts → integrate                | you want distinct expert perspectives merged into one answer.   |
 
-All four share one interface: configure a `ProviderRegistry`, then call
+All five share one interface: configure a `ProviderRegistry`, then call
 `registry.combine({ participants, messages, strategy })`. Participants can be
 different providers, or the **same provider with different models**.
 
@@ -119,18 +121,22 @@ const result = await registry.combine({
 every participant unless a participant overrides them (`retry`/`timeoutMs` apply
 per participant call; see [Retries & cancellation](#retries--cancellation)) — plus:
 
-| Field             | Type                                                           | Notes                                                                                      |
-| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `participants`    | `ParticipantSpec[]`                                            | Required, non-empty. A bare `ProviderName`, or `{ provider, model?, maxTokens?, label? }`. |
-| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` \| `"broadcast"` | Optional. Defaults to `"consensus"`.                                                       |
-| `synthesizer`     | `string` (participant id)                                      | _Consensus only._ Who writes the final answer. Defaults to the first participant.          |
-| `attribution`     | `"attributed"` \| `"anonymized"`                               | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias.                      |
-| `minParticipants` | `number`                                                       | _Consensus only._ Minimum drafts required to proceed (default 2).                          |
-| `responseFormat`  | `ResponseFormat`                                               | _Ensemble only (required there)._ The shared JSON Schema every model answers under.        |
+| Field             | Type                                                                        | Notes                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `participants`    | `ParticipantSpec[]`                                                         | Required, non-empty. A bare `ProviderName`, or `{ provider, model?, maxTokens?, label?, instruction? }`. |
+| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` \| `"broadcast"` \| `"panel"` | Optional. Defaults to `"consensus"`.                                                                     |
+| `synthesizer`     | `string` (participant id)                                                   | _Consensus & panel._ Who writes the final answer. Defaults to the first participant.                     |
+| `attribution`     | `"attributed"` \| `"anonymized"`                                            | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias.                                    |
+| `minParticipants` | `number`                                                                    | _Consensus only._ Minimum drafts required to proceed (default 2).                                        |
+| `crossExamine`    | `boolean`                                                                   | _Panel only._ Run a review round before synthesis (default `false`).                                     |
+| `responseFormat`  | `ResponseFormat`                                                            | _Ensemble only (required there)._ The shared JSON Schema every model answers under.                      |
+
+A participant's `instruction` (a role/persona) is honored only by the `panel`
+strategy; other strategies ignore it.
 
 **Two ways to call it.** When you know the strategy at the call site, prefer the
 per-strategy method — `registry.consensus(req)`, `.pipeline(req)`,
-`.ensemble(req)`, `.broadcast(req)` — each takes that strategy's request type and
+`.ensemble(req)`, `.broadcast(req)`, `.panel(req)` — each takes that strategy's request type and
 returns its **concrete** result (`ConsensusResult`, `PipelineResult`, …), so you
 never narrow a union. `registry.combine(request)` is the dispatcher and is generic over the strategy:
 pass a literal `strategy` and it returns that strategy's concrete result; pass a
@@ -318,6 +324,70 @@ comparable, so all answers go through this one model. The embedding call's usage
 is included in `result.usage`. `semantic` is omitted if fewer than two non-empty
 answers come back or the embedding call fails.
 
+### Panel
+
+A **role-based panel**: each participant answers the same prompt through its own
+`instruction` (a role/persona), then one participant **integrates** the
+complementary perspectives into a single answer. Because the diversity comes from
+the instruction, not the model, you can run the **same model several times** as
+different experts. Unlike [consensus](#consensus) — which adjudicates for the one
+correct answer — panel preserves each perspective's distinct contribution.
+
+```ts
+const result = await registry.panel({
+  messages: [{ role: "user", content: "Should we migrate to microservices?" }],
+  participants: [
+    {
+      provider: "openai",
+      label: "architect",
+      instruction:
+        "You are a systems architect. Focus on scalability and coupling.",
+    },
+    {
+      provider: "openai",
+      label: "sre",
+      instruction:
+        "You are an SRE. Focus on operability, on-call, and failure modes.",
+    },
+    {
+      provider: "openai",
+      label: "eng-manager",
+      instruction:
+        "You are an engineering manager. Focus on team cost and delivery risk.",
+    },
+  ],
+  synthesizer: "architect", // integrates the perspectives; defaults to the first participant
+  crossExamine: true, // optional: each role reviews the others before synthesis (default false)
+});
+
+console.log(result.text); // the integrated answer
+result.answers; // each role's raw answer (participant order)
+result.reviews; // each role's cross-examination ([] when crossExamine is off)
+```
+
+- **`instruction` defines the role.** It's a per-participant field on
+  `ParticipantSpec`; only panel honors it (other strategies ignore it). Give
+  panelists that share a provider+model distinct `label`s.
+- **The synthesizer integrates neutrally** — it runs _without_ its own role
+  instruction, so a participant that is also the synthesizer answers in character
+  in phase 1 but integrates impartially at the end. It falls back to another
+  survivor if the chosen one fails.
+- **`crossExamine`** (default `false`) adds a review round where each panelist
+  cross-examines the others through its own lens before synthesis — extra calls,
+  so it's opt-in.
+- **Degrades gracefully:** with a single surviving answer there is nothing to
+  integrate, so that answer is returned (sanitized); it throws only when **no**
+  participant answers. There is no `minParticipants`/`attribution`.
+- **No structured output:** `responseFormat` is rejected (that's the
+  [ensemble](#ensemble) strategy's job).
+
+**Semantic comparison (optional).** As with [broadcast](#broadcast), pass an
+`embedding` option to attach `result.perspectiveAgreement` (a `SemanticComparison`
+over the role answers) — informational, and it never changes the synthesis. For a
+panel, _low_ agreement is expected and healthy; _high_ agreement is the signal
+worth noticing (the roles collapsed to the same answer), and `outlier` names the
+most divergent role.
+
 ### Per-participant models
 
 Each participant is identified by an **id** (its label). A bare provider name has
@@ -420,6 +490,8 @@ await registry.combine(
           break;
         case "draft":
         case "critique": // consensus
+        case "answer":
+        case "review": // panel
         case "stage": // pipeline (has .index)
         case "response": // ensemble, broadcast
           console.log(`  ${event.provider}: ${event.status}`); // "ok" | "failed"
@@ -1048,9 +1120,9 @@ Exported from the package entry point:
 - Combine request types: `CombineRequest` (the dispatcher's broad type),
   `CombineRequestBase`, and the per-strategy `ConsensusRequest`,
   `PipelineRequest`, `EnsembleRequest` (`responseFormat` required),
-  `BroadcastRequest`; plus `ParticipantSpec`.
+  `BroadcastRequest`, `PanelRequest`; plus `ParticipantSpec`.
 - Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
-  `EnsembleResult` | `BroadcastResult`), `EnsembleAgreement`, `SemanticComparison`,
+  `EnsembleResult` | `BroadcastResult` | `PanelResult`), `EnsembleAgreement`, `SemanticComparison`,
   `CombineUsage`, `CallUsage`, `ParticipantOutcome`, `StrategyName`, `CombineOptions`,
   `CombineBudget`, `CombineEmbedding`, `CombineEvent`, and the strategy-generic
   utilities `StrategyRequest<S>` / `ResultFor<S>`.

@@ -4,9 +4,9 @@
  * converged, which one dissents); it never changes a returned or merged value.
  *
  * The dedicated home for combine's embedding logic (mirrors `cost.ts`): used by
- * `broadcast` and `consensus` (whole-answer {@link compareAnswers}) and `ensemble`
- * (per-field {@link fieldSemanticAgreement}). `pipeline` has no parallel answers to
- * compare, so it doesn't use this.
+ * `broadcast`, `consensus`, and `panel` (whole-answer {@link compareAnswers}) and
+ * `ensemble` (per-field {@link fieldSemanticAgreement}). `pipeline` has no parallel
+ * answers to compare, so it doesn't use this.
  */
 
 import { type SemanticComparison } from "./index";

@@ -81,6 +81,8 @@ export type {
   EnsembleAgreement,
   EnsembleRequest,
   EnsembleResult,
+  PanelRequest,
+  PanelResult,
   ParticipantOutcome,
   ParticipantSpec,
   PipelineRequest,

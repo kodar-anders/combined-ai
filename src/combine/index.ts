@@ -20,6 +20,7 @@ export const STRATEGY_NAMES = [
   "pipeline",
   "ensemble",
   "broadcast",
+  "panel",
 ] as const;
 
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
@@ -46,6 +47,14 @@ export type ParticipantSpec =
        * would otherwise resolve to the same id (e.g. the same provider+model twice).
        */
       label?: string;
+      /**
+       * A per-participant system instruction (a role/persona). **Only the `panel`
+       * strategy honors this today** — other strategies ignore it. It gives each
+       * participant a distinct perspective, letting the same provider+model appear
+       * several times as different experts. Layered as
+       * `[request.system] + [instruction] + [phase framing]`.
+       */
+      instruction?: string;
     };
 
 /**
@@ -118,12 +127,36 @@ export type EnsembleRequest = CombineRequestBase & {
 export type BroadcastRequest = CombineRequestBase;
 
 /**
+ * Request for the `panel` strategy (role-based experts → integrate). Call
+ * {@link ProviderRegistry.panel} directly, or pass `strategy: "panel"` to
+ * {@link ProviderRegistry.combine}. Each participant answers through its own
+ * {@link ParticipantSpec.instruction} (role/persona), then the `synthesizer`
+ * integrates the complementary perspectives into one answer — unlike consensus,
+ * which adjudicates for a single correct answer.
+ */
+export type PanelRequest = CombineRequestBase & {
+  /**
+   * Which participant integrates the final answer, referenced by its **id** (see
+   * {@link ParticipantSpec.label}). Defaults to the first participant.
+   */
+  synthesizer?: string;
+  /**
+   * Run a review round: each participant cross-examines the others' answers
+   * through its own role lens before synthesis. Defaults to `false` (an extra
+   * parallel burst of calls, so it's opt-in).
+   */
+  crossExamine?: boolean;
+};
+
+/**
  * The broad request accepted by the strategy-dispatching
  * {@link ProviderRegistry.combine}: {@link CombineRequestBase} plus every
- * strategy's options and the `strategy` selector. Today only consensus adds
- * options, so this is {@link ConsensusRequest} plus `strategy` (each strategy
- * reads only the options it uses; `responseFormat` stays optional here, inherited
- * from {@link CompletionRequest}). Prefer a per-strategy method
+ * strategy's options and the `strategy` selector — {@link ConsensusRequest}'s
+ * options (`synthesizer`/`attribution`/`minParticipants`) plus panel's
+ * `crossExamine`, plus `strategy`. Each strategy reads only the options it uses
+ * (e.g. `crossExamine` is ignored outside panel, like `attribution` is outside
+ * consensus); `responseFormat` stays optional here, inherited from
+ * {@link CompletionRequest}. Prefer a per-strategy method
  * ({@link ProviderRegistry.consensus} etc.) when the strategy is known at the
  * call site — they take the precise {@link ConsensusRequest}/… type and return
  * the concrete result without narrowing.
@@ -131,6 +164,11 @@ export type BroadcastRequest = CombineRequestBase;
 export type CombineRequest = ConsensusRequest & {
   /** Cooperation strategy. Defaults to `"consensus"`. */
   strategy?: StrategyName;
+  /**
+   * Run a review round in the `panel` strategy (panel-only; ignored elsewhere).
+   * See {@link PanelRequest.crossExamine}.
+   */
+  crossExamine?: boolean;
 };
 
 /**
@@ -321,13 +359,44 @@ export type BroadcastResult = {
   usage?: CombineUsage;
 };
 
+/** The result of the `panel` strategy (role-based experts → integrate). */
+export type PanelResult = {
+  /** The final integrated answer. */
+  text: string;
+  strategy: "panel";
+  /** The id of the participant that integrated the final answer (may be a fallback if the chosen one failed). */
+  synthesizer: string;
+  /** The model the synthesizer actually used. */
+  model: string;
+  /** Phase 1 role answers, in participant order (includes any failures). */
+  answers: ParticipantOutcome[];
+  /** Phase 2 cross-examination reviews, in surviving-participant order (empty when `crossExamine` was off). */
+  reviews: ParticipantOutcome[];
+  /**
+   * A {@link SemanticComparison} of the surviving role answers — present only
+   * when {@link CombineOptions.embedding} was set and at least two answers
+   * survived. **Informational; it does not influence synthesis.** Unlike the
+   * other strategies, for a panel *low* agreement is expected and healthy (the
+   * roles are meant to differ); *high* agreement is the signal worth noticing —
+   * it means the roles collapsed to the same answer. The `outlier` names the most
+   * divergent role.
+   */
+  perspectiveAgreement?: SemanticComparison;
+  /** Aggregated token usage across every call, or `undefined` if none was reported. */
+  usage?: CombineUsage;
+};
+
 /**
  * The result of a combine, discriminated on `strategy`. Narrow on
  * `result.strategy` to reach the strategy-specific artifacts. Note that
  * `BroadcastResult` has no `text` (it returns every raw response, not one answer).
  */
 export type CombineResult =
-  ConsensusResult | PipelineResult | EnsembleResult | BroadcastResult;
+  | ConsensusResult
+  | PipelineResult
+  | EnsembleResult
+  | BroadcastResult
+  | PanelResult;
 
 /**
  * Maps a strategy name to its request type — e.g. `StrategyRequest<"ensemble">`
@@ -339,6 +408,7 @@ export type StrategyRequest<S extends StrategyName> = {
   pipeline: PipelineRequest;
   ensemble: EnsembleRequest;
   broadcast: BroadcastRequest;
+  panel: PanelRequest;
 }[S];
 
 /**
@@ -357,11 +427,16 @@ export type ResultFor<S extends StrategyName> = Extract<
  * (in completion order, which may differ from participant order). For `pipeline`,
  * a `stage` event fires as each stage settles (in conveyor order). For `ensemble`
  * and `broadcast`, a `response` event fires as each participant settles (in
- * completion order, which may differ from participant order). The final answer is
- * the resolved {@link CombineResult}, so there is no terminal event.
+ * completion order, which may differ from participant order). For `panel`, `phase`
+ * marks a boundary and `answer`/`review` fire as each participant settles. The
+ * final answer is the resolved {@link CombineResult}, so there is no terminal event.
  */
 export type CombineEvent =
-  | { type: "phase"; phase: "drafting" | "critiquing" | "synthesizing" }
+  | {
+      type: "phase";
+      phase:
+        "drafting" | "critiquing" | "synthesizing" | "answering" | "reviewing";
+    }
   | {
       type: "draft";
       id: string;
@@ -370,6 +445,20 @@ export type CombineEvent =
     }
   | {
       type: "critique";
+      id: string;
+      provider: ProviderName;
+      status: "ok" | "failed";
+    }
+  | {
+      /** A `panel` participant's role answer settled. */
+      type: "answer";
+      id: string;
+      provider: ProviderName;
+      status: "ok" | "failed";
+    }
+  | {
+      /** A `panel` participant's cross-examination review settled. */
+      type: "review";
       id: string;
       provider: ProviderName;
       status: "ok" | "failed";
@@ -395,8 +484,9 @@ export type CombineEvent =
        * set:
        * - **skip** (`skipped` set): the running cost crossed `budgetUsd`, so an
        *   *optional* phase was dropped to stay near budget — consensus
-       *   `"critiques"`/`"sanitize"`, or a pipeline `"refine"` stage/`"sanitize"`.
-       *   For a skipped pipeline refiner, `id`/`index` identify the stage not run.
+       *   `"critiques"`/`"sanitize"`, panel `"reviews"`/`"sanitize"`, or a pipeline
+       *   `"refine"` stage/`"sanitize"`. For a skipped pipeline refiner, `id`/`index`
+       *   identify the stage not run.
        *   Required phases still run, so `spentUsd` can exceed `budgetUsd`.
        * - **under-enforced** (`underEnforced: true`): emitted once when a settled
        *   call couldn't be priced (unknown model, or no usage reported) and so
@@ -408,7 +498,7 @@ export type CombineEvent =
       type: "budget";
       spentUsd: number;
       budgetUsd: number;
-      skipped?: "critiques" | "refine" | "sanitize";
+      skipped?: "critiques" | "refine" | "sanitize" | "reviews";
       underEnforced?: boolean;
       id?: string;
       index?: number;

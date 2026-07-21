@@ -60,7 +60,10 @@ describe("GoogleProvider.complete", () => {
       system: "Be brief.",
     });
 
-    expect(result).toEqual({ text: "Hello, world.", model: "gemini-3.5-flash" });
+    expect(result).toEqual({
+      text: "Hello, world.",
+      model: "gemini-3.5-flash",
+    });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(

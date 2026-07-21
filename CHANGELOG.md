@@ -9,6 +9,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **`panel` combine strategy** — a role-based expert panel (mixture-of-agents). Each participant
+  answers the same prompt through its own `instruction` (role/persona), then a `synthesizer`
+  **integrates** the complementary perspectives into one answer (rather than adjudicating for a
+  single winner like `consensus`). Optional `crossExamine` review round; optional
+  `perspectiveAgreement` semantic signal when an `embedding` is configured. Call
+  `registry.panel(req)` or `combine({ strategy: "panel" })`. Adds `PanelRequest`/`PanelResult`,
+  the `answer`/`review` progress events, and the `answering`/`reviewing` phases.
+- **Per-participant `instruction`** on `ParticipantSpec` — a role/persona system prompt. Honored
+  by the `panel` strategy today (other strategies ignore it), letting the same provider+model
+  appear several times as different experts.
 - **OpenAI pricing entries** for the GPT-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`;
   GA 2026-07-09) and `gpt-5.5-pro`. The 5.6 line is tiered Sol/Terra/Luna (no mini/nano this
   generation). `gpt-5.5-pro` has no published cache-read rate, so cached input falls back to the

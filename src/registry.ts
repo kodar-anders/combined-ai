@@ -19,6 +19,8 @@ import {
   type ConsensusResult,
   type EnsembleRequest,
   type EnsembleResult,
+  type PanelRequest,
+  type PanelResult,
   type ParticipantSpec,
   type PipelineRequest,
   type PipelineResult,
@@ -30,6 +32,7 @@ import { broadcast as runBroadcast } from "./combine/broadcast";
 import { type ResolvedEmbedder } from "./combine/embedding";
 import { consensus as runConsensus } from "./combine/consensus";
 import { ensemble as runEnsemble } from "./combine/ensemble";
+import { panel as runPanel } from "./combine/panel";
 import { pipeline as runPipeline } from "./combine/pipeline";
 import { type RosterEntry } from "./combine/shared";
 import {
@@ -179,7 +182,8 @@ export class ProviderRegistry {
    * enforcement of a strategy's specific options (e.g. `responseFormat` required
    * for ensemble) call the per-strategy method ({@link ProviderRegistry.consensus},
    * {@link ProviderRegistry.pipeline}, {@link ProviderRegistry.ensemble},
-   * {@link ProviderRegistry.broadcast}), which takes that strategy's request type.
+   * {@link ProviderRegistry.broadcast}, {@link ProviderRegistry.panel}), which
+   * takes that strategy's request type.
    */
   async combine<S extends StrategyName = "consensus">(
     request: Omit<CombineRequest, "strategy"> & { strategy?: S },
@@ -207,6 +211,9 @@ export class ProviderRegistry {
         break;
       case "broadcast":
         result = await this.broadcast(request, options);
+        break;
+      case "panel":
+        result = await this.panel(request, options);
         break;
       default: {
         const unreachable: never = strategy;
@@ -289,6 +296,25 @@ export class ProviderRegistry {
     this.#rejectResponseFormat(request, "broadcast");
     const embedder = this.#resolveEmbedder(options?.embedding);
     return runBroadcast(roster, request, options, embedder);
+  }
+
+  /**
+   * Run the `panel` strategy (role-based experts → integrate) — every participant
+   * answers through its own {@link ParticipantSpec.instruction}, then the
+   * `synthesizer` integrates the complementary perspectives into one answer.
+   * Strategy-specific: `synthesizer` (defaults to the first participant),
+   * `crossExamine` (an optional review round, default off).
+   */
+  async panel(
+    request: PanelRequest,
+    options?: CombineOptions,
+  ): Promise<PanelResult> {
+    const { roster, ids, firstId } = this.#prepare(request);
+    this.#rejectResponseFormat(request, "panel");
+    this.#validateSynthesizer(request, ids);
+    const synthesizer = request.synthesizer ?? firstId;
+    const embedder = this.#resolveEmbedder(options?.embedding);
+    return runPanel(roster, synthesizer, request, options, embedder);
   }
 
   /**
@@ -441,6 +467,11 @@ export class ProviderRegistry {
         );
       }
     }
+    this.#validateSynthesizer(request, ids);
+  }
+
+  /** Validate that a requested `synthesizer` (if any) names one of the participants. */
+  #validateSynthesizer(request: { synthesizer?: string }, ids: string[]): void {
     if (
       request.synthesizer !== undefined &&
       !ids.includes(request.synthesizer)
@@ -541,6 +572,7 @@ function normalizeParticipant(
     providerName: spec.provider,
     model: spec.model,
     maxTokens: spec.maxTokens,
+    instruction: spec.instruction,
   };
 }
 

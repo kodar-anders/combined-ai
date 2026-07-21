@@ -334,6 +334,15 @@ describe("ProviderRegistry.combine", () => {
         responseFormat,
       }),
     ).rejects.toThrow(/only supported by the "ensemble" strategy/);
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        strategy: "panel",
+        responseFormat,
+      }),
+    ).rejects.toThrow(/only supported by the "ensemble" strategy/);
   });
 
   it("rejects a non-object-root schema for the ensemble strategy", async () => {
@@ -502,7 +511,12 @@ describe("ProviderRegistry.combine", () => {
     ];
 
     // No strategy rejects `budget` — it's informational on the fan-out strategies.
-    for (const strategy of ["consensus", "pipeline", "broadcast"] as const) {
+    for (const strategy of [
+      "consensus",
+      "pipeline",
+      "broadcast",
+      "panel",
+    ] as const) {
       await expect(
         registry.combine(
           { ...PROMPT, strategy, participants },
@@ -510,6 +524,45 @@ describe("ProviderRegistry.combine", () => {
         ),
       ).resolves.toBeDefined();
     }
+  });
+
+  it("dispatches the panel strategy, threading each participant's instruction", async () => {
+    const calls: CompletionRequest[] = [];
+    const echo: Provider = {
+      name: "mine",
+      complete: (req: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(req);
+        return Promise.resolve({ text: "integrated", model: "m" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    const result = await registry.combine({
+      ...PROMPT,
+      strategy: "panel",
+      participants: [
+        { provider: "mine", label: "optimist", instruction: "Be optimistic." },
+        { provider: "mine", label: "skeptic", instruction: "Be skeptical." },
+      ],
+    });
+
+    // `combine({ strategy: "panel" })` is typed `PanelResult` — no narrowing.
+    expect(result.strategy).toBe("panel");
+    expect(result.synthesizer).toBe("optimist");
+    expect(result.answers.map((o) => o.id)).toEqual(["optimist", "skeptic"]);
+
+    // Each role's instruction reached its own answer call (the synthesis pass runs
+    // neutrally, so at least the two answer calls must carry the two instructions).
+    const systems = calls.map((c) =>
+      typeof c.system === "string" ? c.system : "",
+    );
+    expect(systems.some((s) => s.includes("Be optimistic."))).toBe(true);
+    expect(systems.some((s) => s.includes("Be skeptical."))).toBe(true);
   });
 });
 
@@ -571,6 +624,40 @@ describe("ProviderRegistry per-strategy methods", () => {
 
     expect(calls.map((c) => c.model)).toEqual(["fast", "smart"]);
     expect(result.finalParticipant).toBe("mine-smart");
+  });
+
+  it("panel() returns a typed PanelResult without narrowing", async () => {
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    // The method's return type is PanelResult, so `answers` is reachable without
+    // narrowing a union.
+    const result = await registry.panel({
+      ...PROMPT,
+      participants: [
+        { provider: "mine", label: "a", instruction: "Role A." },
+        { provider: "mine", label: "b", instruction: "Role B." },
+      ],
+    });
+
+    expect(result.strategy).toBe("panel");
+    expect(result.answers.map((o) => o.id)).toEqual(["a", "b"]);
+    expect(result.reviews).toEqual([]);
+  });
+
+  it("panel() rejects a synthesizer that is not a participant", async () => {
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    await expect(
+      registry.panel({
+        ...PROMPT,
+        participants: [{ provider: "mine", label: "a" }],
+        synthesizer: "nope",
+      }),
+    ).rejects.toThrow(/must be one of the participants/);
   });
 
   it("shares the cross-cutting validation (e.g. rejects an empty roster)", async () => {
