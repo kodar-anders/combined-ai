@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-21
+
 ### Added
 
 - **`panel` combine strategy** — a role-based expert panel (mixture-of-agents). Each participant
