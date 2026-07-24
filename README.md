@@ -379,7 +379,9 @@ The `combined-ai/test` subpath additionally exports `MockProvider` (plus
 Planned, in rough priority order (subject to change):
 
 - **Token counting** before send.
-- **Streaming in `combine`**: incremental progress across phases.
+- **Token-level streaming in `combine`**: deltas from the terminal call. Progress
+  events already carry each participant's finished output; token streaming waits on
+  usage reporting for `stream()`.
 - **Standard Schema support**: pass Zod/Valibot/etc. for structured output, no
   added dependency.
 - **Minority-veto consensus** policy.

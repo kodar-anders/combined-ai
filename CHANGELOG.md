@@ -7,6 +7,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Content-bearing `combine` progress events** — every settlement event
+  (`draft`/`critique`/`answer`/`review`/`stage`/`response`) now carries the participant's
+  `ParticipantOutcome`, so an `onEvent` listener can render partial results as they land instead of
+  waiting for the whole run. `status: "ok"` guarantees `result` (the full `CompletionResult` —
+  `text`, `model`, `usage`, and `parsed` for a structured `ensemble` response); `status: "failed"`
+  guarantees `error`, which previously wasn't reported to a listener at all. `phase` and `budget`
+  events are unchanged. Still no token-level streaming.
+
+  A settled `CompletionResult` is now **frozen** (shallowly). An event hands out the same object
+  the strategy later renders into the next phase's prompt and prices for the budget, so a listener
+  editing it in place would corrupt the run; the freeze makes that write throw instead. This also
+  freezes the copy reachable from the result's `drafts`/`stages`/`responses`, since it is the same
+  object — copy before editing (`{ ...result, text: … }`).
+
+### Changed
+
+- **`CombineEvent`'s settlement variants are now intersections with `ParticipantOutcome`.**
+  _Reading_ events is source-compatible — `event.id`/`provider`/`status`, `switch` narrowing, and an
+  `onEvent` handler typed against the old shape all still work. **Constructing** one (a test fixture,
+  a re-emitting wrapper, `satisfies CombineEvent`) now requires `result`/`error`. Events also
+  serialize larger: a listener that JSON-logs whole events now logs each participant's full output
+  text. Note that neither serializer round-trips a `failed` event's `error` — `JSON.stringify` omits
+  its `message` (non-enumerable on `Error`), and `structuredClone` downgrades a `ProviderError` to a
+  plain `Error`, dropping `status`/`kind`/`code` — so map the fields you need to a plain object.
+
 ## [0.6.0] - 2026-07-21
 
 ### Added

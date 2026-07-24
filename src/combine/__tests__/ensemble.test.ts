@@ -229,18 +229,26 @@ describe("ensemble", () => {
       onEvent: (event) => events.push(event),
     });
 
-    expect(events).toContainEqual({
-      type: "response",
-      id: "anthropic",
-      provider: "anthropic",
-      status: "ok",
-    });
-    expect(events).toContainEqual({
-      type: "response",
-      id: "openai",
-      provider: "openai",
-      status: "failed",
-    });
+    // The settlement event carries the whole result, so an incremental UI reaches
+    // `parsed` — the structured object, not just its serialized text.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        id: "anthropic",
+        provider: "anthropic",
+        status: "ok",
+        result: expect.objectContaining({ parsed: { city: "Paris", pop: 5 } }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        id: "openai",
+        provider: "openai",
+        status: "failed",
+        error: expect.any(Error),
+      }),
+    );
   });
 
   it("applies each participant's model override to its call", async () => {

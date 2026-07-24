@@ -152,14 +152,24 @@ export function composeSystem(
   return text === undefined ? framing : `${text}\n\n${framing}`;
 }
 
-/** Run one participant's completion, capturing success or failure as an outcome. */
+/**
+ * Run one participant's completion, capturing success or failure as an outcome.
+ *
+ * The `result` is **frozen**: this exact object is handed to `onEvent` listeners
+ * (every settlement event carries its outcome) *while* later phases still render its
+ * `text` into their prompts and price its `usage`, so an in-place edit by a listener
+ * would corrupt the run. Freezing is the single choke point for that — all six
+ * settlement events come through here. It is shallow (nested `usage`/`parsed` are
+ * not frozen) and it necessarily also freezes the copy reachable from the returned
+ * result's `drafts`/`stages`/`responses`, since that is the same object.
+ */
 export async function runOutcome(
   id: string,
   provider: ProviderName,
   run: () => Promise<CompletionResult>,
 ): Promise<ParticipantOutcome> {
   try {
-    return { id, provider, status: "ok", result: await run() };
+    return { id, provider, status: "ok", result: Object.freeze(await run()) };
   } catch (error) {
     return {
       id,
@@ -190,12 +200,7 @@ export async function respondAll(
           completionFor(request, request.system, request.messages, entry),
         ),
       );
-      emit({
-        type: "response",
-        id: entry.id,
-        provider: entry.providerName,
-        status: outcome.status,
-      });
+      emit({ ...outcome, type: "response" });
       return outcome;
     }),
   );

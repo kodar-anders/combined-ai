@@ -888,6 +888,59 @@ describe("consensus", () => {
     expect(failed).toEqual(["anthropic"]);
   });
 
+  it("carries each draft's and critique's content in its progress event", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls, "draft"),
+      },
+    ];
+
+    await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
+      { onEvent: (event) => events.push(event) },
+    );
+
+    // A settled draft carries its own text, so a UI can render it as it lands.
+    const drafts = events.flatMap((e) =>
+      e.type === "draft" && e.status === "ok"
+        ? [`${e.id}=${e.result.text}`]
+        : [],
+    );
+    expect(new Set(drafts)).toEqual(
+      new Set(["anthropic=anthropic:draft", "openai=openai:draft"]),
+    );
+
+    // A failed draft carries the provider's own error instead of a result.
+    const errors = events.flatMap((e) =>
+      e.type === "draft" && e.status === "failed" ? [e.error.message] : [],
+    );
+    expect(errors).toEqual(["gemini failed during draft"]);
+
+    // Critiques carry their content too (only the two survivors critique).
+    const critiques = events.flatMap((e) =>
+      e.type === "critique" && e.status === "ok" ? [e.result.text] : [],
+    );
+    expect(new Set(critiques)).toEqual(
+      new Set(["anthropic:critique", "openai:critique"]),
+    );
+  });
+
   it("emits only drafting events for a single-participant combine", async () => {
     const calls: Call[] = [];
     const events: CombineEvent[] = [];
@@ -910,10 +963,56 @@ describe("consensus", () => {
       },
     );
 
-    expect(events).toEqual([
+    // toMatchObject (not toEqual) so the settlement event's `result` payload
+    // doesn't have to be spelled out here; the array length is still exact, which
+    // is what this test is about.
+    expect(events).toMatchObject([
       { type: "phase", phase: "drafting" },
       { type: "draft", id: "anthropic", provider: "anthropic", status: "ok" },
     ]);
+  });
+
+  it("freezes a settled result so a mutating listener cannot corrupt later phases", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls),
+      },
+    ];
+
+    await consensus(
+      roster,
+      "anthropic",
+      {
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        attribution: "attributed",
+      },
+      {
+        onEvent: (event) => {
+          // A well-meaning listener redacting or truncating in place. The event's
+          // `result` is the same object the critique and synthesis prompts are built
+          // from, so this must not take effect: the frozen result makes the write
+          // throw, and the emitter swallows it.
+          if (event.type === "draft" && event.status === "ok") {
+            event.result.text = "REDACTED";
+          }
+        },
+      },
+    );
+
+    const critiqueBody =
+      calls.find((c) => c.phase === "critique")?.request.messages[0]?.content ??
+      "";
+    expect(critiqueBody).toContain("anthropic:draft");
+    expect(critiqueBody).not.toContain("REDACTED");
   });
 
   it("swallows errors thrown by the progress handler", async () => {

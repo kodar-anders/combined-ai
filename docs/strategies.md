@@ -258,8 +258,13 @@ input (no participants, duplicate ids, empty `messages`, an out-of-range
 ## Progress events
 
 `combine()` takes an optional second argument with an `onEvent` callback that
-fires as the run progresses, handy for a status display. Events are status only
-(no token streaming); the answer is still the resolved result.
+fires as the run progresses. Every **settlement** event
+(`draft`/`critique`/`answer`/`review`/`stage`/`response`) carries that
+participant's outcome, so you can render partial results as they land rather than
+waiting for the whole run: `status: "ok"` gives you `result` (the full
+`CompletionResult` — `text`, `model`, `usage`, and `parsed` for a structured
+`ensemble` response), and `status: "failed"` gives you `error`. There is still no
+token-level streaming; the final answer is the resolved result.
 
 ```ts
 await registry.combine(
@@ -276,7 +281,17 @@ await registry.combine(
         case "review": // panel
         case "stage": // pipeline (has .index)
         case "response": // ensemble, broadcast
-          console.log(`  ${event.provider}: ${event.status}`); // "ok" | "failed"
+          if (event.status === "failed") {
+            console.log(`  ${event.provider} failed: ${event.error.message}`);
+          } else {
+            // `result` is the participant's own completion. Under ensemble (the one
+            // strategy with a schema) the structured object is on `parsed`; every
+            // other strategy leaves `parsed` undefined and puts prose in `text`.
+            console.log(
+              `  ${event.provider}:`,
+              event.result.parsed ?? event.result.text,
+            );
+          }
           break;
         case "budget": // a phase was skipped to stay near budget
           console.log(
@@ -293,3 +308,44 @@ await registry.combine(
 run, and there is no terminal event (the result is the return value). See
 [Combine cost & budgets](./cost-and-caching.md#combine-cost--budgets) for the
 `budget` event.
+
+Before rendering that content, know what it is:
+
+- **What the text is differs per event type.** `draft`/`critique` (consensus) and
+  `answer`/`review` (panel) are **process material** — their framing tells the model
+  its reply is read by another assistant or an integrator, not an end user — so the
+  text may be in-character, role-scoped, or meta-referential; show it as
+  intermediate work, not as the answer. A `broadcast` `response` is an ordinary
+  reply to your own prompt. An `ensemble` `response` is the **raw JSON** of the
+  structured answer, so read `result.parsed`, not `result.text`. A pipeline `stage`
+  is addressed to the user, but it is pre-sanitize — see the third bullet below.
+- **`status: "ok"` means the call succeeded, not that its output was used.** An
+  `ok` outcome with empty text is dropped from the next phase: a consensus draft or
+  panel answer stops being a survivor (and consensus may still go on to throw on
+  `minParticipants`), and a pipeline stage doesn't advance the running answer. An
+  ensemble `response` whose `result.parsed` isn't a plain object is excluded from
+  the merge. Check `status === "ok"` _and_ non-empty text before treating a
+  settlement as accepted.
+- **The last settlement event's text is not the final answer.** Synthesis and the
+  sanitizing rewrite run after the last settlement event and emit no event of their
+  own, so only the resolved result's `text` is authoritative.
+- **Events are not a cost ledger.** Summing `event.result.usage` understates the
+  run: synthesis attempts (including discarded ones), every sanitize pass, and any
+  embedding call are billed but emit no event. Use `combineCost(result)`.
+- **A `critique` under the default `attribution: "anonymized"` refers to `Answer
+A`/`Answer B`** headings the event can't resolve back to a participant. Use
+  `attribution: "attributed"` if you need critique text to be self-describing.
+- **A `fallback()` chain used as a participant** reports only the chain's final
+  outcome under its own id; the internal hops are invisible to `onEvent`.
+- **`event.result` is frozen.** It's the same object that lands in the result's
+  `drafts`/`stages`/`responses` and is rendered into the next phase's prompt, so
+  editing it in place would change what the next phase sees. Writing to it throws
+  (the emitter swallows the error, so the run is unaffected) — copy before editing,
+  e.g. `{ ...event.result, text: redact(event.result.text) }`. The freeze is shallow:
+  nested `usage`/`parsed` aren't frozen, so treat those as read-only by convention.
+- **Neither serializer round-trips the `error`.** `JSON.stringify` omits its
+  `message` (non-enumerable on `Error`), keeping only a `ProviderError`'s own fields;
+  `structuredClone` keeps the message but downgrades a `ProviderError` to a plain
+  `Error`, dropping `status`/`kind`/`code`. Map what you need to a plain object
+  yourself (e.g. `{ message: error.message, status }`). An event also copies the
+  participant's whole output text, so logging events wholesale isn't cheap.

@@ -425,6 +425,21 @@ describe("panel", () => {
     expect(phases).toEqual(["answering", "reviewing", "synthesizing"]);
     expect(events.filter((e) => e.type === "answer")).toHaveLength(3);
     expect(events.filter((e) => e.type === "review")).toHaveLength(3);
+
+    // Each settlement carries its own content (the role answer / the review), so a
+    // UI can render each perspective as it lands.
+    const answers = events.flatMap((e) =>
+      e.type === "answer" && e.status === "ok" ? [e.result.text] : [],
+    );
+    expect(new Set(answers)).toEqual(
+      new Set(["anthropic:answer", "openai:answer", "gemini:answer"]),
+    );
+    const reviews = events.flatMap((e) =>
+      e.type === "review" && e.status === "ok" ? [e.result.text] : [],
+    );
+    expect(new Set(reviews)).toEqual(
+      new Set(["anthropic:review", "openai:review", "gemini:review"]),
+    );
   });
 
   it("aggregates token usage per participant, overall, and in the ledger", async () => {

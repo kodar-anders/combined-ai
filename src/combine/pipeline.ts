@@ -135,13 +135,7 @@ export async function pipeline(
       entry.provider.complete(completion),
     );
     stages.push(outcome);
-    emit({
-      type: "stage",
-      id: entry.id,
-      provider: entry.providerName,
-      status: outcome.status,
-      index,
-    });
+    emit({ ...outcome, type: "stage", index });
     budget.add(outcomeUsage([outcome]));
 
     // A stage advances the running answer only if it produced non-empty text;

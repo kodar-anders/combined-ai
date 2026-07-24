@@ -430,6 +430,49 @@ export type ResultFor<S extends StrategyName> = Extract<
  * completion order, which may differ from participant order). For `panel`, `phase`
  * marks a boundary and `answer`/`review` fire as each participant settles. The
  * final answer is the resolved {@link CombineResult}, so there is no terminal event.
+ *
+ * Every **settlement** event (`draft`/`critique`/`answer`/`review`/`stage`/
+ * `response`) carries that participant's {@link ParticipantOutcome}, so a UI can
+ * render partial results as they land: `status: "ok"` guarantees `result` (the full
+ * {@link CompletionResult} — `text`, `model`, `usage`, and `parsed` for a structured
+ * `ensemble` response), and `status: "failed"` guarantees `error`. Three things to
+ * know before rendering that content:
+ *
+ * 1. **What the text is differs per event type.** `draft`/`critique` (consensus)
+ *    and `answer`/`review` (panel) are **process material**: their framing tells the
+ *    model its reply is read by another assistant or an integrator, not an end user,
+ *    so the text can be in-character, role-scoped, or meta-referential — label it as
+ *    intermediate work rather than presenting it as the answer. A `broadcast`
+ *    `response` is an ordinary reply to the caller's own prompt. An `ensemble`
+ *    `response` is the **raw JSON** of the structured answer, so read `result.parsed`
+ *    rather than `result.text`. A pipeline `stage` is addressed to the user, but it is
+ *    pre-sanitize — see (3).
+ * 2. **`status: "ok"` means the call succeeded, not that its output was used.** An
+ *    `ok` outcome with empty text is dropped from the next phase (a consensus draft
+ *    or panel answer stops being a survivor — and consensus can still go on to
+ *    throw on `minParticipants`; a pipeline stage doesn't advance the running
+ *    answer). An `ensemble` `response` whose `result.parsed` isn't a plain object is
+ *    excluded from the merge. Check `status === "ok"` *and* non-empty text before
+ *    treating a settlement as accepted.
+ * 3. **The last settlement event's text is not the final answer.** Synthesis and
+ *    the sanitizing rewrite run *after* the last settlement event and emit no event
+ *    of their own, so the resolved {@link CombineResult} is the only source of truth
+ *    for `text`.
+ *
+ * `event.result` is **frozen**, because it is the same object that lands in the
+ * result's `drafts`/`stages`/`responses` and is rendered into the next phase's
+ * prompt — an in-place edit would otherwise corrupt the run. Writing to it throws
+ * (and the emitter swallows the error, so the run is unaffected); copy before
+ * editing. The freeze is shallow: nested `usage`/`parsed` are not frozen, so treat
+ * those as read-only by convention.
+ *
+ * Shipping an event elsewhere (a log sink, a worker, an SSE feed) needs care with the
+ * `error`: `JSON.stringify` omits its `message` (non-enumerable on `Error`), keeping
+ * only a `ProviderError`'s own fields, while `structuredClone` keeps the message but
+ * downgrades a `ProviderError` to a plain `Error`, dropping `status`/`kind`/`code`.
+ * Neither round-trips it — map what you need to a plain object yourself (e.g.
+ * `{ message: error.message, status }`). Note too that an event copies the
+ * participant's whole output text, so logging events wholesale is not cheap.
  */
 export type CombineEvent =
   | {
@@ -437,47 +480,31 @@ export type CombineEvent =
       phase:
         "drafting" | "critiquing" | "synthesizing" | "answering" | "reviewing";
     }
-  | {
+  | ({
+      /** A `consensus` participant's draft settled. */
       type: "draft";
-      id: string;
-      provider: ProviderName;
-      status: "ok" | "failed";
-    }
-  | {
+    } & ParticipantOutcome)
+  | ({
+      /** A `consensus` participant's critique settled. */
       type: "critique";
-      id: string;
-      provider: ProviderName;
-      status: "ok" | "failed";
-    }
-  | {
+    } & ParticipantOutcome)
+  | ({
       /** A `panel` participant's role answer settled. */
       type: "answer";
-      id: string;
-      provider: ProviderName;
-      status: "ok" | "failed";
-    }
-  | {
+    } & ParticipantOutcome)
+  | ({
       /** A `panel` participant's cross-examination review settled. */
       type: "review";
-      id: string;
-      provider: ProviderName;
-      status: "ok" | "failed";
-    }
-  | {
+    } & ParticipantOutcome)
+  | ({
       /** A `pipeline` stage settled. `index` is its 0-based position in the conveyor. */
       type: "stage";
-      id: string;
-      provider: ProviderName;
-      status: "ok" | "failed";
       index: number;
-    }
-  | {
+    } & ParticipantOutcome)
+  | ({
       /** A participant settled in an `ensemble` or `broadcast` run. */
       type: "response";
-      id: string;
-      provider: ProviderName;
-      status: "ok" | "failed";
-    }
+    } & ParticipantOutcome)
   | {
       /**
        * A {@link CombineBudget} signal. Two cases, distinguished by which field is
@@ -545,6 +572,10 @@ export type CombineOptions = {
   /**
    * Called with progress events as the combine runs. Errors thrown from the
    * handler are swallowed so a progress listener can never break the run.
+   *
+   * Settlement events carry the participant's {@link ParticipantOutcome} — its
+   * `result` (or `error`) — so a UI can render each draft/answer/stage as it lands.
+   * See {@link CombineEvent} for what that content is and isn't safe to present.
    */
   onEvent?: (event: CombineEvent) => void;
   /**

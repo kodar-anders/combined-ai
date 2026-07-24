@@ -173,18 +173,36 @@ describe("broadcast", () => {
       { onEvent: (event) => events.push(event) },
     );
 
-    expect(events).toContainEqual({
-      type: "response",
-      id: "anthropic",
-      provider: "anthropic",
-      status: "ok",
-    });
-    expect(events).toContainEqual({
-      type: "response",
-      id: "openai",
-      provider: "openai",
-      status: "failed",
-    });
+    // Settlement events carry the outcome: `ok` brings the participant's own
+    // result (so a UI can render the answer as it lands), `failed` brings the error.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        id: "anthropic",
+        provider: "anthropic",
+        status: "ok",
+        result: expect.objectContaining({ text: "ok" }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        id: "openai",
+        provider: "openai",
+        status: "failed",
+        error: expect.any(Error),
+      }),
+    );
+
+    // The payload is exclusive, not merely typed that way: an `ok` settlement has
+    // `result` and no `error`, a `failed` one the reverse. The assertions above are
+    // subset matches, so this is what pins the field set the doc comment promises.
+    const settled = events.flatMap((e) => (e.type === "response" ? [e] : []));
+    expect(settled).toHaveLength(2);
+    for (const event of settled) {
+      expect("result" in event).toBe(event.status === "ok");
+      expect("error" in event).toBe(event.status === "failed");
+    }
   });
 
   it("applies each participant's model override to its call", async () => {

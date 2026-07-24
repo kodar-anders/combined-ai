@@ -133,12 +133,7 @@ export async function panel(
           completionFor(request, system, request.messages, entry),
         ),
       );
-      emit({
-        type: "answer",
-        id: entry.id,
-        provider: entry.providerName,
-        status: outcome.status,
-      });
+      emit({ ...outcome, type: "answer" });
       return { entry, outcome };
     }),
   );
@@ -235,12 +230,7 @@ export async function panel(
             ),
           ),
         );
-        emit({
-          type: "review",
-          id: s.id,
-          provider: s.providerName,
-          status: outcome.status,
-        });
+        emit({ ...outcome, type: "review" });
         return outcome;
       }),
     );

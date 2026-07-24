@@ -583,7 +583,9 @@ describe("pipeline", () => {
     );
 
     const stages = events.flatMap((e) => (e.type === "stage" ? [e] : []));
-    expect(stages).toEqual([
+    // toMatchObject (not toEqual) so each stage's `result`/`error` payload doesn't
+    // have to be spelled out here; the array length and order are still exact.
+    expect(stages).toMatchObject([
       {
         type: "stage",
         id: "anthropic",
@@ -606,6 +608,47 @@ describe("pipeline", () => {
         index: 2,
       },
     ]);
+  });
+
+  it("carries each stage's output in its event, including an ok-but-empty stage that does not advance", async () => {
+    const calls: Call[] = [];
+    const events: CombineEvent[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+      },
+      {
+        // Succeeds but returns empty text: the event is still `ok`, yet the stage
+        // does not advance the running answer — the documented gotcha.
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls, undefined, "refine"),
+      },
+      {
+        id: "gemini",
+        providerName: "gemini" as const,
+        provider: fakeProvider("gemini", calls),
+      },
+    ];
+
+    const result = await pipeline(
+      roster,
+      { ...PROMPT, participants: ["anthropic", "openai", "gemini"] },
+      { onEvent: (event) => events.push(event) },
+    );
+
+    // Each stage event carries that stage's own output, in conveyor order.
+    const staged = events.flatMap((e) =>
+      e.type === "stage" && e.status === "ok" ? [e.result.text] : [],
+    );
+    expect(staged).toEqual(["anthropic:first", "", "gemini:refine"]);
+
+    // gemini refined the *first* stage's answer, since the empty middle stage
+    // never became the running answer.
+    expect(firstText(calls[2]?.request ?? PROMPT)).toContain("anthropic:first");
+    expect(result.text).toBe("gemini:refine");
   });
 
   it("swallows errors thrown by the progress handler", async () => {

@@ -108,12 +108,7 @@ export async function consensus(
           completionFor(request, draftSystem, request.messages, entry),
         ),
       );
-      emit({
-        type: "draft",
-        id: entry.id,
-        provider: entry.providerName,
-        status: outcome.status,
-      });
+      emit({ ...outcome, type: "draft" });
       return { entry, outcome };
     }),
   );
@@ -203,12 +198,7 @@ export async function consensus(
             ),
           ),
         );
-        emit({
-          type: "critique",
-          id: s.id,
-          provider: s.providerName,
-          status: outcome.status,
-        });
+        emit({ ...outcome, type: "critique" });
         return outcome;
       }),
     );
