@@ -141,8 +141,9 @@ describe("costOfUsage", () => {
   });
 
   it("falls back to the full input rate when a model lists no cached rate", () => {
-    // gpt-4.1 has no cachedInputPerMTok, so cache reads bill at the $2 input rate:
-    // the cost matches the same all-uncached call (no fabricated discount).
+    // gpt-5.5-pro has no cachedInputPerMTok (OpenAI publishes none for the `-pro`
+    // models), so cache reads bill at the $30 input rate: the cost matches the same
+    // all-uncached call (no fabricated discount).
     const cached = costOfUsage(
       {
         inputTokens: 1_000_000,
@@ -150,9 +151,9 @@ describe("costOfUsage", () => {
         cachedInputTokens: 1_000_000,
         totalTokens: 1_000_000,
       },
-      "gpt-4.1",
+      "gpt-5.5-pro",
     );
-    expect(cached?.inputCost).toBe(2);
+    expect(cached?.inputCost).toBe(30);
   });
 
   it("prices Gemini cache reads at the model's cached rate", () => {

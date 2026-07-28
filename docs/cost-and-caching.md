@@ -17,7 +17,7 @@ import { costOf } from "combined-ai";
 
 const result = await registry.select("anthropic").complete({ messages });
 const cost = costOf(result);
-// → { model: "claude-opus-4-8", inputCost, outputCost, totalCost } | undefined
+// → { model: "claude-opus-5", inputCost, outputCost, totalCost } | undefined
 if (cost) console.log(`$${cost.totalCost.toFixed(4)}`);
 ```
 

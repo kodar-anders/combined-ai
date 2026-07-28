@@ -270,7 +270,7 @@ Pass an entry for each provider you want; omit one to leave it out.
 new ProviderRegistry({
   anthropic: {
     apiKey: "sk-ant-...", // required
-    model: "claude-opus-4-8", // optional; default
+    model: "claude-opus-5", // optional; default
     baseUrl: "https://api.anthropic.com", // optional; default
     retry: { maxRetries: 2, baseDelayMs: 500 }, // optional; defaults
   },
@@ -281,7 +281,7 @@ new ProviderRegistry({
   },
   google: {
     apiKey: "...",
-    model: "gemini-3.5-flash", // optional; default
+    model: "gemini-3.6-flash", // optional; default
   },
 });
 ```

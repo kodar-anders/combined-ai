@@ -19,7 +19,11 @@ describe("findModel", () => {
   it("resolves a dated OpenAI snapshot to its base id by longest-prefix", () => {
     const info = findModel("gpt-4.1-2025-04-14");
     expect(info?.id).toBe("gpt-4.1");
-    expect(info?.pricing).toEqual({ inputPerMTok: 2, outputPerMTok: 8 });
+    expect(info?.pricing).toEqual({
+      inputPerMTok: 2,
+      outputPerMTok: 8,
+      cachedInputPerMTok: 0.5,
+    });
   });
 
   it("keeps gpt-4.1-mini distinct from gpt-4.1 (longest anchored prefix wins)", () => {
@@ -30,6 +34,7 @@ describe("findModel", () => {
     expect(findModel("gpt-4.1-mini")?.pricing).toEqual({
       inputPerMTok: 0.4,
       outputPerMTok: 1.6,
+      cachedInputPerMTok: 0.1,
     });
   });
 
@@ -86,6 +91,7 @@ describe("findModel", () => {
     expect(findModel("gpt-4o-mini")?.pricing).toEqual({
       inputPerMTok: 0.15,
       outputPerMTok: 0.6,
+      cachedInputPerMTok: 0.075,
     });
     expect(findModel("gemini-2.5-flash-lite")?.pricing).toEqual({
       inputPerMTok: 0.1,
@@ -95,7 +101,14 @@ describe("findModel", () => {
   });
 
   it("prices and disambiguates the current-generation additions", () => {
-    // Anthropic: Sonnet 5 (balanced tier of the Claude 5 family) + Opus 4.6.
+    // Anthropic: Opus 5 (the current default) prices like the 4.x Opus line.
+    expect(findModel("claude-opus-5")?.pricing).toEqual({
+      inputPerMTok: 5,
+      outputPerMTok: 25,
+      cachedInputPerMTok: 0.5,
+      cacheWriteInputPerMTok: 6.25,
+    });
+    // Sonnet 5 (balanced tier of the Claude 5 family) + Opus 4.6.
     expect(findModel("claude-sonnet-5")?.pricing).toEqual({
       inputPerMTok: 3,
       outputPerMTok: 15,
@@ -116,21 +129,26 @@ describe("findModel", () => {
     expect(findModel("gpt-5.4-nano")?.id).toBe("gpt-5.4-nano");
     expect(findModel("gpt-5.4-2026-01-01")?.id).toBe("gpt-5.4");
 
-    // OpenAI reasoning models — no cache-read rate carried; a dated snapshot still
-    // resolves to the base id, and o4-mini stays distinct from a bare `o4` prefix.
+    // OpenAI reasoning models — a dated snapshot still resolves to the base id, and
+    // o4-mini stays distinct from a bare `o4` prefix.
     expect(findModel("o3")?.pricing).toEqual({
       inputPerMTok: 2,
       outputPerMTok: 8,
+      cachedInputPerMTok: 0.5,
     });
     expect(findModel("o4-mini")?.pricing).toEqual({
-      inputPerMTok: 0.55,
-      outputPerMTok: 2.2,
+      inputPerMTok: 1.1,
+      outputPerMTok: 4.4,
+      cachedInputPerMTok: 0.275,
     });
     expect(findModel("o3-2025-04-16")?.id).toBe("o3");
 
     // Gemini 3.x GA flash tiers.
+    expect(findModel("gemini-3.6-flash")?.pricing.outputPerMTok).toBe(7.5);
     expect(findModel("gemini-3.5-flash")?.pricing.outputPerMTok).toBe(9);
     expect(findModel("gemini-3.1-flash-lite")?.pricing.inputPerMTok).toBe(0.25);
+    // The two flash-lite generations are differently priced siblings, not snapshots.
+    expect(findModel("gemini-3.5-flash-lite")?.pricing.inputPerMTok).toBe(0.3);
   });
 
   it("returns a copy whose mutation does not corrupt the registry", () => {

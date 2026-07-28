@@ -108,7 +108,7 @@ chain, set `model` per entry rather than on the request**, since one
 ```ts
 registry.fallback([
   { provider: "openai", model: "gpt-5.4" },
-  { provider: "anthropic", model: "claude-opus-4-8" },
+  { provider: "anthropic", model: "claude-opus-5" },
 ]);
 ```
 

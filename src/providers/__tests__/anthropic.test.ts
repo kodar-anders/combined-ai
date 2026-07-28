@@ -45,7 +45,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [
             { type: "text", text: "Hello, " },
             { type: "text", text: "world." },
@@ -59,7 +59,7 @@ describe("AnthropicProvider.complete", () => {
       system: "Be brief.",
     });
 
-    expect(result).toEqual({ text: "Hello, world.", model: "claude-opus-4-8" });
+    expect(result).toEqual({ text: "Hello, world.", model: "claude-opus-5" });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.anthropic.com/v1/messages");
@@ -72,7 +72,7 @@ describe("AnthropicProvider.complete", () => {
 
     const body = JSON.parse(init.body as string);
     expect(body).toEqual({
-      model: "claude-opus-4-8",
+      model: "claude-opus-5",
       max_tokens: 16000,
       messages: [{ role: "user", content: "Hi" }],
       system: "Be brief.",
@@ -102,7 +102,7 @@ describe("AnthropicProvider.complete", () => {
   it("maps ContentPart[] content onto Anthropic content blocks", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
@@ -134,7 +134,7 @@ describe("AnthropicProvider.complete", () => {
   it("maps image and file parts onto Anthropic image/document blocks", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
@@ -193,7 +193,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [{ type: "text", text: '{"city":"Paris"}' }],
         }),
     }));
@@ -223,7 +223,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [{ type: "text", text: "not json" }],
         }),
     }));
@@ -244,7 +244,7 @@ describe("AnthropicProvider.complete", () => {
   it("sends tools and tool_choice", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
@@ -271,7 +271,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           stop_reason: "tool_use",
           content: [
             { type: "text", text: "Let me check." },
@@ -301,7 +301,7 @@ describe("AnthropicProvider.complete", () => {
   it("maps tool_use and tool_result content parts onto blocks", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
@@ -347,7 +347,7 @@ describe("AnthropicProvider.complete", () => {
   it("hoists tool_result blocks ahead of text (Anthropic requires them first)", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
@@ -376,7 +376,7 @@ describe("AnthropicProvider.complete", () => {
   it("forwards an abort signal to fetch", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const controller = new AbortController();
@@ -395,7 +395,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           stop_reason: "max_tokens",
           content: [{ type: "text", text: "Partial" }],
         }),
@@ -416,7 +416,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           stop_reason: "refusal",
           content: [{ type: "refusal", text: "I can't help with that." }],
         }),
@@ -438,7 +438,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [{ type: "text", text: "Hi" }],
           usage: { input_tokens: 12, output_tokens: 8 },
         }),
@@ -461,7 +461,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [{ type: "text", text: "Hi" }],
           usage: {
             input_tokens: 100,
@@ -493,7 +493,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [{ type: "text", text: "Hi" }],
           usage: { input_tokens: 12, output_tokens: 8 },
         }),
@@ -519,7 +519,7 @@ describe("AnthropicProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           content: [{ type: "text", text: "Hi" }],
           usage: { output_tokens: 8, cache_read_input_tokens: 800 },
         }),
@@ -540,7 +540,7 @@ describe("AnthropicProvider.complete", () => {
   it("omits usage when the response carries none", async () => {
     mockFetch(() => ({
       ok: true,
-      json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
     }));
 
     const provider = new AnthropicProvider({ apiKey: "sk-test" });
@@ -568,7 +568,7 @@ describe("AnthropicProvider.complete", () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            model: "claude-opus-4-8",
+            model: "claude-opus-5",
             content: [{ type: "text", text: "Recovered." }],
           }),
       };
@@ -658,7 +658,7 @@ describe("AnthropicProvider.complete", () => {
 describe("AnthropicProvider prompt caching", () => {
   const okEmpty = () => ({
     ok: true as const,
-    json: () => Promise.resolve({ model: "claude-opus-4-8", content: [] }),
+    json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
   });
 
   it("emits cache_control on a marked content part (default 5-minute TTL)", async () => {

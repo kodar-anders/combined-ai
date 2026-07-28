@@ -36,7 +36,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   field's winning vote count it gives both integers a confidence model needs, without re-deriving
   them from the ratio or re-filtering `responses`.
 
+- **Pricing entries** for Anthropic `claude-opus-5`, Google `gemini-3.6-flash`,
+  `gemini-3.5-flash-lite` and `gemini-embedding-2` (text rate — the model is multimodal and
+  bills higher for image/audio/video, which the table doesn't model). Prices re-verified across
+  all three providers on 2026-07-28.
+
+- **OpenAI cache-read rates** for `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`,
+  `gpt-4.1-nano`, `o3` and `o4-mini` — the pricing page publishes them again. Cached input on
+  these rows was previously billed at the full input rate. The discount is not a fixed multiple
+  (0.25×–0.5× here vs 0.1× on the 5.x rows); the `-pro` rows still list none and keep falling
+  back to the full rate.
+
 ### Fixed
+
+- **`o4-mini` was priced at half its real rate** — $0.55/$2.20 per MTok in the table against
+  OpenAI's published $1.10/$4.40. Any `costOf`/`combineCost` figure for `o4-mini` was understated
+  by 50%.
 
 - **A `__proto__` key in a model's structured output no longer corrupts the `ensemble` merge.**
   `JSON.parse` makes `__proto__` an ordinary own enumerable property, so building the merged object
@@ -48,6 +63,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   while still typed `number`, so a caller's `score.toFixed(2)` threw.
 
 ### Changed
+
+- **Anthropic default model** is now `claude-opus-5` (was `claude-opus-4-8`). Same $5/$25 per MTok,
+  and Anthropic's recommended starting model since its 2026-07-24 release. `claude-opus-4-8` stays
+  in the pricing table and remains selectable via `model`.
+
+- **Google default model** is now `gemini-3.6-flash` (was `gemini-3.5-flash`). Same $1.50 input,
+  cheaper output ($7.50 vs $9.00), and Google's named successor for the retiring 2.5 flash line.
+  The default embedding model stays `gemini-embedding-001`: `gemini-embedding-2` uses an
+  incompatible embedding space, so switching it would invalidate stored vectors.
 
 - **`CombineEvent`'s settlement variants are now intersections with `ParticipantOutcome`.**
   _Reading_ events is source-compatible — `event.id`/`provider`/`status`, `switch` narrowing, and an
