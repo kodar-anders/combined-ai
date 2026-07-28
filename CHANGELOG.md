@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-28
+
+First stable release. The public API — the `Provider` contract, `ProviderRegistry`, the five
+combine strategies, and the cost/embedding helpers — is now considered settled, and subsequent
+breaking changes will come with a major bump. No migration is needed from `0.6.0` beyond the two
+construction-side type changes noted under **Changed**.
+
 ### Added
 
 - **Content-bearing `combine` progress events** — every settlement event

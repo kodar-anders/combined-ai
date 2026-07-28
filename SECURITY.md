@@ -34,6 +34,6 @@ public disclosure. Thank you for helping keep combined-ai and its users safe.
 
 ## Supported versions
 
-This project is pre-1.0 and under active development. Security fixes are released
-against the **latest published version**; please upgrade to the newest release
-before reporting an issue you can no longer reproduce on it.
+Security fixes are released against the **latest published version**; please
+upgrade to the newest release before reporting an issue you can no longer
+reproduce on it.
