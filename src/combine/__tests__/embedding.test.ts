@@ -119,6 +119,24 @@ describe("fieldSemanticAgreement", () => {
     expect(calls).toEqual([["answer a", "answer b", "answer a", "answer c"]]);
   });
 
+  it("keeps a __proto__ field as a real score instead of hitting the prototype setter", async () => {
+    // Field names come from model output via JSON.parse, which can make `__proto__`
+    // an ordinary own key. Index assignment would silently drop it — and reading it
+    // back would yield Object.prototype typed as `number`, so a caller's
+    // `score.toFixed(2)` would throw. Built with fromEntries, it stays a number.
+    const result = await fieldSemanticAgreement(fakeEmbedder(), [
+      { key: "__proto__", values: ["answer a", "answer b"] },
+      { key: "x", values: ["answer a", "answer c"] },
+    ]);
+
+    // Object.entries, so this asserts an *own* property — dot/bracket access can't
+    // tell an own score from the inherited accessor this bug used to expose.
+    expect(Object.entries(result?.agreement ?? {})).toEqual([
+      ["__proto__", expect.closeTo(1)],
+      ["x", expect.closeTo(0)],
+    ]);
+  });
+
   it("skips fields with fewer than two values", async () => {
     const result = await fieldSemanticAgreement(fakeEmbedder(), [
       { key: "x", values: ["answer a", "answer b"] },

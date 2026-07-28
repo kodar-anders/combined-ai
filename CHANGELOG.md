@@ -23,6 +23,30 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   freezes the copy reachable from the result's `drafts`/`stages`/`responses`, since it is the same
   object — copy before editing (`{ ...result, text: … }`).
 
+- **Per-field vote detail on `ensemble`** — `EnsembleResult.votes` gives, for each field, every
+  distinct value with the participant ids that returned it (`winner: true` on the one in `merged`)
+  plus `absent`, the ids that omitted the field. Reading "one model said `1245.00`, the other two
+  said `12450.00`" no longer means re-walking `responses` and reimplementing the vote's
+  deep-equality grouping. `absent` is what distinguishes a low `agreement.byField` score caused by
+  sparse coverage from one caused by disagreement. Adds `EnsembleFieldVote` and
+  `EnsembleFieldCandidate`.
+
+- **`EnsembleAgreement.validResponseCount`** — the denominator of every `byField` score (the number of
+  participants that returned a valid structured object, so ≤ `responses.length`). Paired with a
+  field's winning vote count it gives both integers a confidence model needs, without re-deriving
+  them from the ratio or re-filtering `responses`.
+
+### Fixed
+
+- **A `__proto__` key in a model's structured output no longer corrupts the `ensemble` merge.**
+  `JSON.parse` makes `__proto__` an ordinary own enumerable property, so building the merged object
+  by index assignment invoked the prototype setter: the field silently vanished from `merged` and
+  `text`, and the merged object's prototype was replaced by the model-supplied value. All four
+  records keyed by model-supplied field names — `merged`, `agreement.byField`, `votes`, and
+  `semanticAgreement` — are now built with `Object.fromEntries`, which defines a real own property.
+  `semanticAgreement` was the sharpest case: a dropped numeric score read back as `Object.prototype`
+  while still typed `number`, so a caller's `score.toFixed(2)` threw.
+
 ### Changed
 
 - **`CombineEvent`'s settlement variants are now intersections with `ParticipantOutcome`.**
@@ -33,6 +57,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   text. Note that neither serializer round-trips a `failed` event's `error` — `JSON.stringify` omits
   its `message` (non-enumerable on `Error`), and `structuredClone` downgrades a `ProviderError` to a
   plain `Error`, dropping `status`/`kind`/`code` — so map the fields you need to a plain object.
+
+- **`ensemble` ties now resolve to the first-seen value, as documented.** The vote previously picked
+  the value that first _reached_ the winning count, which differs whenever an earlier-seen value's
+  occurrences straddle another's — `A,B,B,A` merged to `B`, not `A`. Only reachable with **4 or more
+  valid responses** (a 3-participant roster can't hit it), and `agreement` was unaffected either way,
+  so the scores are unchanged; only which tied value lands in `merged`/`text` can differ.
+
+- `EnsembleResult.votes` and `EnsembleAgreement.validResponseCount` are **required**, so _reading_ a
+  result is source-compatible but **constructing** one (a test fixture, a hand-rolled double,
+  `satisfies EnsembleResult`) now requires both fields.
 
 ## [0.6.0] - 2026-07-21
 

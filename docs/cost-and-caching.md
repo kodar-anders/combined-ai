@@ -53,6 +53,7 @@ import { combineCost } from "combined-ai";
 
 const result = await registry.combine({ messages, participants });
 const cost = combineCost(result); // { totalCost, byParticipant } in USD, or undefined
+if (cost) console.log(cost.totalCost);
 ```
 
 It returns `undefined` when nothing is priceable (no usage, or every call's model

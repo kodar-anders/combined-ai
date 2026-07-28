@@ -71,11 +71,19 @@ merges the typed objects **mechanically** (no model adjudicates) and returns an
 How the merge works (field-wise over the union of top-level keys):
 
 - **Every field is a majority vote**: the most common value by deep equality, ties
-  broken by participant order. The merged value is always one a model returned
+  broken by first-seen participant order. The merged value is always one a model returned
   (never synthesized or averaged), so it stays within the schema's types.
 - **Agreement** per field is the share of **all** valid responses that voted for
-  the merged value; `overall` is the mean across fields. A field most models
+  the merged value; `overall` is the mean across fields, and `validResponseCount` is the
+  denominator (valid responses, so ≤ `responses.length`). A field most models
   omitted scores low, so use a low score as a review signal.
+- **`votes` itemizes the tally**: per field, each distinct value with the
+  participant ids that returned it (`winner: true` on the one in `merged`), plus
+  `absent` — the ids that omitted the field. `absent` is what tells a low score
+  caused by _sparse coverage_ from one caused by _disagreement_. The fields worth
+  reviewing are `Object.entries(result.votes).filter(([, v]) => v.candidates.length > 1)`.
+  Keyed identically to `merged` and `agreement.byField`; `semanticAgreement` is the
+  exception, covering only string fields.
 - **`responseFormat` is required** for ensemble and **rejected** for the other
   strategies. Its schema must have an **object** root (the field-wise vote needs
   named fields).
@@ -230,7 +238,8 @@ if (result.strategy === "consensus") {
 } else if (result.strategy === "ensemble") {
   result.text; // the merged object serialized as JSON
   result.merged; // the voted object
-  result.agreement; // { overall, byField }
+  result.agreement; // { overall, byField, validResponseCount }
+  result.votes; // per field: who returned which value, and who omitted it
   result.responses; // each participant's structured answer (ok/failed)
 } else if (result.strategy === "broadcast") {
   // No `text` — broadcast returns every raw answer, not one combined answer.

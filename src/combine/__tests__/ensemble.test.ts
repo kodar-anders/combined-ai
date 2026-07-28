@@ -380,4 +380,310 @@ describe("ensemble", () => {
 
     expect(result.semanticAgreement).toBeUndefined();
   });
+
+  describe("votes (per-field dissent detail)", () => {
+    it("groups each field's values with the ids that returned them, flagging the winner", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { total: "12450.00" } }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { total: "1245.00" } }),
+        ),
+        entry(
+          "gemini",
+          fakeProvider("gemini", calls, { parsed: { total: "12450.00" } }),
+        ),
+      ];
+
+      const result = await ensemble(roster, request());
+
+      // The reviewer's question — "who said what?" — answered without re-walking
+      // `responses` or reimplementing the vote's equality rule.
+      expect(result.votes.total).toEqual({
+        candidates: [
+          { value: "12450.00", ids: ["anthropic", "gemini"], winner: true },
+          { value: "1245.00", ids: ["openai"], winner: false },
+        ],
+        absent: [],
+      });
+      expect(result.merged.total).toBe("12450.00");
+    });
+
+    it("reports a unanimous field as a single candidate with nobody absent", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { city: "Paris" } }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { city: "Paris" } }),
+        ),
+        entry(
+          "gemini",
+          fakeProvider("gemini", calls, { parsed: { city: "Paris" } }),
+        ),
+      ];
+
+      const result = await ensemble(roster, request());
+
+      expect(result.votes.city?.candidates).toHaveLength(1);
+      expect(result.votes.city?.candidates[0]).toEqual({
+        value: "Paris",
+        ids: ["anthropic", "openai", "gemini"],
+        winner: true,
+      });
+      expect(result.votes.city?.absent).toEqual([]);
+    });
+
+    it("names the participants that omitted a field in `absent`", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, {
+            parsed: { city: "Paris", note: "x" },
+          }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { city: "Paris" } }),
+        ),
+        entry(
+          "gemini",
+          fakeProvider("gemini", calls, { parsed: { city: "Paris" } }),
+        ),
+      ];
+
+      const result = await ensemble(roster, request());
+
+      // `note` scores 1/3 because two participants omitted it, not because they
+      // disagreed — `absent` is what tells those two causes apart.
+      expect(result.agreement.byField.note).toBeCloseTo(1 / 3);
+      expect(result.votes.note?.candidates).toHaveLength(1);
+      expect(result.votes.note?.absent).toEqual(["openai", "gemini"]);
+    });
+
+    it("resolves a tie to the first-seen value, not the first to reach the winning count", async () => {
+      // The discriminating case: with 4 participants voting A,B,B,A both values end
+      // on 2, but B *reaches* 2 first. The documented rule is first-seen, so A wins.
+      // A 2- or 3-participant tie passes under either rule and would pin nothing.
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { pick: "A" } }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { pick: "B" } }),
+        ),
+        entry(
+          "gemini",
+          fakeProvider("gemini", calls, { parsed: { pick: "B" } }),
+        ),
+        entry(
+          "custom",
+          fakeProvider("custom", calls, { parsed: { pick: "A" } }),
+        ),
+      ];
+
+      const result = await ensemble(
+        roster,
+        request({
+          participants: ["anthropic", "openai", "gemini", "custom"],
+        }),
+      );
+
+      expect(result.merged.pick).toBe("A");
+      expect(result.votes.pick?.candidates).toEqual([
+        { value: "A", ids: ["anthropic", "custom"], winner: true },
+        { value: "B", ids: ["openai", "gemini"], winner: false },
+      ]);
+      expect(result.agreement.byField.pick).toBeCloseTo(0.5);
+    });
+
+    it("treats a returned null as a candidate, not an omission", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { due: null } }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { due: "2026-01-01" } }),
+        ),
+      ];
+
+      const result = await ensemble(
+        roster,
+        request({ participants: ["anthropic", "openai"] }),
+      );
+
+      // null is a value a model actually returned — it votes, and it wins the tie
+      // by being first-seen. Absence is a separate concept.
+      expect(result.merged.due).toBeNull();
+      expect(result.votes.due?.candidates).toEqual([
+        { value: null, ids: ["anthropic"], winner: true },
+        { value: "2026-01-01", ids: ["openai"], winner: false },
+      ]);
+      expect(result.votes.due?.absent).toEqual([]);
+    });
+
+    it("groups objects that differ only in key order into one candidate", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { at: { a: 1, b: 2 } } }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { at: { b: 2, a: 1 } } }),
+        ),
+      ];
+
+      const result = await ensemble(
+        roster,
+        request({ participants: ["anthropic", "openai"] }),
+      );
+
+      // Deep equality, so key order isn't disagreement.
+      expect(result.votes.at?.candidates).toHaveLength(1);
+      expect(result.votes.at?.candidates[0]?.ids).toEqual([
+        "anthropic",
+        "openai",
+      ]);
+      expect(result.agreement.byField.at).toBeCloseTo(1);
+    });
+
+    it("counts only valid responses, in neither candidates nor absent otherwise", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { city: "Paris" } }),
+        ),
+        entry("openai", fakeProvider("openai", calls, { fail: true })),
+        entry("gemini", fakeProvider("gemini", calls, { parsed: undefined })),
+        // A plain-object root is required: an array `parsed` is dropped wholesale.
+        entry(
+          "custom",
+          fakeProvider("custom", calls, { parsed: [{ city: "x" }] }),
+        ),
+      ];
+
+      const result = await ensemble(
+        roster,
+        request({
+          participants: ["anthropic", "openai", "gemini", "custom"],
+        }),
+      );
+
+      expect(result.agreement.validResponseCount).toBe(1);
+      expect(result.votes.city?.candidates).toEqual([
+        { value: "Paris", ids: ["anthropic"], winner: true },
+      ]);
+      // The three excluded participants didn't "omit the field" — they never voted.
+      expect(result.votes.city?.absent).toEqual([]);
+      expect(result.responses).toHaveLength(4);
+    });
+
+    it("accounts for every valid response in each field's vote", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { a: 1, b: 2 } }),
+        ),
+        entry("openai", fakeProvider("openai", calls, { parsed: { a: 1 } })),
+        entry("gemini", fakeProvider("gemini", calls, { parsed: { c: 3 } })),
+      ];
+
+      const result = await ensemble(roster, request());
+
+      // The invariant that makes `absent` trustworthy: candidates + absent covers
+      // exactly the responses the vote counted, for every field.
+      expect(result.agreement.validResponseCount).toBe(3);
+      for (const vote of Object.values(result.votes)) {
+        const voters = vote.candidates.reduce((n, c) => n + c.ids.length, 0);
+        expect(voters + vote.absent.length).toBe(
+          result.agreement.validResponseCount,
+        );
+      }
+      expect(Object.keys(result.votes)).toEqual(Object.keys(result.merged));
+    });
+
+    it("keeps a __proto__ field as real data instead of polluting the merge", async () => {
+      const calls: Call[] = [];
+      // A model can emit any JSON, and JSON.parse makes `__proto__` an ordinary own
+      // enumerable key. Assigning it by index would invoke the prototype setter:
+      // the field would vanish from `merged`/`text` and the record's prototype would
+      // be replaced. Object.fromEntries defines a real own property instead.
+      const payload = JSON.parse(
+        '{"city":"Paris","__proto__":{"pwned":true}}',
+      ) as Record<string, unknown>;
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: payload }),
+        ),
+        entry("openai", fakeProvider("openai", calls, { parsed: payload })),
+      ];
+
+      const result = await ensemble(
+        roster,
+        request({ participants: ["anthropic", "openai"] }),
+      );
+
+      expect(Object.keys(result.merged)).toEqual(["city", "__proto__"]);
+      expect(Object.keys(result.votes)).toEqual(["city", "__proto__"]);
+      expect(Object.keys(result.agreement.byField)).toEqual([
+        "city",
+        "__proto__",
+      ]);
+      // No prototype pollution: the payload's object didn't become the prototype.
+      expect(Object.getPrototypeOf(result.merged)).toBe(Object.prototype);
+      expect((result.merged as { pwned?: unknown }).pwned).toBeUndefined();
+      // And the field survives serialization instead of vanishing from `text`.
+      // (Built with fromEntries, not a literal — `__proto__:` in an object literal
+      // assigns the prototype rather than an own key, which is the same trap.)
+      const round = JSON.parse(result.text) as Record<string, unknown>;
+      expect(round).toEqual(
+        Object.fromEntries([
+          ["city", "Paris"],
+          ["__proto__", { pwned: true }],
+        ]),
+      );
+    });
+
+    it("reports the vote denominator as the number of valid responses", async () => {
+      const calls: Call[] = [];
+      const roster = [
+        entry(
+          "anthropic",
+          fakeProvider("anthropic", calls, { parsed: { city: "Paris" } }),
+        ),
+        entry(
+          "openai",
+          fakeProvider("openai", calls, { parsed: { city: "Lyon" } }),
+        ),
+        entry("gemini", fakeProvider("gemini", calls, { fail: true })),
+      ];
+
+      const result = await ensemble(roster, request());
+
+      // 3 participants, 2 valid → the denominator every byField score divides by.
+      expect(result.agreement.validResponseCount).toBe(2);
+      expect(result.agreement.byField.city).toBeCloseTo(0.5);
+      const winner = result.votes.city?.candidates.find((c) => c.winner);
+      expect(winner?.ids).toEqual(["anthropic"]);
+    });
+  });
 });

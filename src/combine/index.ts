@@ -280,6 +280,66 @@ export type EnsembleAgreement = {
    * low value flags either disagreement or sparse coverage.
    */
   byField: Record<string, number>;
+  /**
+   * How many responses the vote actually counted — the **denominator** of every
+   * {@link byField} score. This is the number of participants that returned a valid
+   * structured object, so it's ≤ `responses.length` (a failed call, or one whose
+   * `parsed` isn't a plain object, doesn't vote). Paired with a field's winning vote
+   * count (`votes[field].candidates.find((c) => c.winner)?.ids.length`) it gives the
+   * two integers a confidence model wants, without re-deriving them from the ratio.
+   */
+  validResponseCount: number;
+};
+
+/**
+ * One distinct value returned for a field, with the participants that returned it.
+ * Values are grouped by the **same deep equality the vote uses**, so two models
+ * emitting the same object with different key order form one candidate.
+ */
+export type EnsembleFieldCandidate = {
+  /**
+   * The value, exactly as the participant(s) returned it. This is the **same
+   * object reference** as `merged[field]` (for the winner) and as the participant's
+   * own `responses[i].result.parsed[field]` — mutating it mutates all of them, so
+   * treat it as read-only.
+   */
+  value: unknown;
+  /**
+   * The participant ids that returned this value, in participant order. Never
+   * empty, and unique by construction (the registry validates participant ids).
+   * These are participant **ids**, not provider names — they coincide only when no
+   * `label` was set; otherwise join back to `responses` for the provider/model.
+   */
+  ids: string[];
+  /**
+   * True for the candidate that won the vote — the value in `merged[field]`.
+   * Exactly one candidate per field carries it.
+   */
+  winner: boolean;
+};
+
+/**
+ * The full vote for one field of the merged object: every value a participant
+ * returned for it, and who omitted it. This is the breakdown `merged` and
+ * `agreement` were computed **from** — not a side signal — so a reviewer can show
+ * "one model said `1245.00`, the other two said `12450.00`" without re-walking
+ * `responses` and reimplementing the vote's equality rule.
+ */
+export type EnsembleFieldVote = {
+  /**
+   * Every distinct value returned for this field, in first-seen participant order
+   * (the order is stable across runs; the winner is flagged, not sorted first). A
+   * single entry means unanimous **among the participants that returned the field**;
+   * two or more is dissent.
+   */
+  candidates: EnsembleFieldCandidate[];
+  /**
+   * The participant ids that omitted this field. They still count against
+   * `agreement.byField[field]` (the denominator is all valid responses), so this is
+   * what distinguishes a low score caused by **sparse coverage** from one caused by
+   * **disagreement**. Empty when every participant returned the field.
+   */
+  absent: string[];
 };
 
 /**
@@ -295,6 +355,18 @@ export type EnsembleResult = {
   merged: Record<string, unknown>;
   /** How strongly the participants agreed, overall and per field. */
   agreement: EnsembleAgreement;
+  /**
+   * Per-field vote breakdown: which value each participant returned, grouped by the
+   * vote's own deep equality, plus who omitted the field. Keyed identically to
+   * `merged` and `agreement.byField` (the first-seen union of the participants'
+   * keys), so a per-field view can iterate one and index the others — note
+   * {@link semanticAgreement} is the exception, covering only string fields.
+   *
+   * This is the record of how `merged` was produced, so it's always present. The
+   * dissenting fields are one filter away:
+   * `Object.entries(votes).filter(([, v]) => v.candidates.length > 1)`.
+   */
+  votes: Record<string, EnsembleFieldVote>;
   /**
    * Per-field **semantic** agreement (mean pairwise cosine, in `[-1, 1]` —
    * typically 0–1 for text) over the string-valued fields — present only when

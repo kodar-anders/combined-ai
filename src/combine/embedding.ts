@@ -112,12 +112,16 @@ export async function fieldSemanticAgreement(
   if (result.embeddings.length !== inputs.length) {
     return undefined;
   }
-  const agreement: Record<string, number> = {};
-  for (const span of spans) {
-    agreement[span.key] = meanPairwiseCosine(
-      result.embeddings.slice(span.start, span.end),
-    );
-  }
+  // Object.fromEntries, not `record[key] = …`: these keys are model-supplied field
+  // names reaching us through JSON.parse, which can make `__proto__` an ordinary own
+  // key. Index assignment would invoke the prototype setter — dropping the field
+  // while `agreement["__proto__"]` reads back as Object.prototype typed `number`.
+  const agreement: Record<string, number> = Object.fromEntries(
+    spans.map((span) => [
+      span.key,
+      meanPairwiseCosine(result.embeddings.slice(span.start, span.end)),
+    ]),
+  );
   return { agreement, usage: embeddingUsage(embedder, result) };
 }
 

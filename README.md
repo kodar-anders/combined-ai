@@ -159,6 +159,7 @@ const result = await registry.ensemble({
 console.log(result.merged); // e.g. { city: "Paris", country: "France" }
 console.log(result.agreement.overall); // 0–1: how much the models agreed
 console.log(result.agreement.byField); // e.g. { city: 1, country: 0.67 }
+console.log(result.votes.country); // who returned which value, and who omitted it
 ```
 
 → [Ensemble details](./docs/strategies.md#ensemble)
@@ -357,7 +358,8 @@ Exported from the package entry point:
   `BroadcastRequest`, `PanelRequest`; plus `ParticipantSpec`.
 - Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
   `EnsembleResult` | `BroadcastResult` | `PanelResult`), `EnsembleAgreement`,
-  `SemanticComparison`, `CombineUsage`, `CallUsage`, `ParticipantOutcome`,
+  `EnsembleFieldVote`, `EnsembleFieldCandidate`, `SemanticComparison`,
+  `CombineUsage`, `CallUsage`, `ParticipantOutcome`,
   `StrategyName`, `CombineOptions`, `CombineBudget`, `CombineEmbedding`,
   `CombineEvent`, and the strategy-generic utilities `StrategyRequest<S>` /
   `ResultFor<S>`.

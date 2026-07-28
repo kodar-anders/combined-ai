@@ -79,6 +79,8 @@ export type {
   ConsensusRequest,
   ConsensusResult,
   EnsembleAgreement,
+  EnsembleFieldCandidate,
+  EnsembleFieldVote,
   EnsembleRequest,
   EnsembleResult,
   PanelRequest,
