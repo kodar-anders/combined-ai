@@ -8,6 +8,7 @@ import { extractModel, isRecord } from "./extract";
 import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import {
+  assertValidTemperature,
   readJsonBody,
   requestControls,
   requestWithRetry,
@@ -220,6 +221,12 @@ export class OpenAIProvider implements Provider {
       max_completion_tokens: request.maxTokens ?? defaultMaxTokens,
       messages: toOpenAIMessages(request),
     };
+    // Only sent when asked for: the reasoning-tier models reject a non-default value,
+    // so an unconditional `temperature` would turn a working model into a 400.
+    if (request.temperature !== undefined) {
+      assertValidTemperature(request.temperature);
+      body.temperature = request.temperature;
+    }
     if (request.responseFormat !== undefined) {
       // OpenAI Structured Outputs: response_format.json_schema with strict:true
       // (requires additionalProperties:false + every property in `required`).

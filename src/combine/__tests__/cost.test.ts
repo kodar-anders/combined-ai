@@ -48,6 +48,9 @@ describe("combineCost", () => {
     expect(cost).toEqual({
       totalCost: 7,
       byParticipant: { openai: 7 },
+      // The claude call's usage has no prompt tokens, so it can't be priced — a known
+      // model still counts toward `unpriced`.
+      unpriced: 1,
     });
   });
 
@@ -95,8 +98,27 @@ describe("combineCost", () => {
         },
       ]),
     );
-    // Only the priceable call is counted; the unknown model is omitted entirely.
-    expect(cost).toEqual({ totalCost: 2, byParticipant: { openai: 2 } });
+    // Only the priceable call is counted; the unknown model is omitted entirely but
+    // reported via `unpriced`, so the caller can tell $2 from "$2 plus who-knows".
+    expect(cost).toEqual({
+      totalCost: 2,
+      byParticipant: { openai: 2 },
+      unpriced: 1,
+    });
+  });
+
+  it("reports unpriced: 0 when every call priced", () => {
+    const cost = combineCost(
+      resultWith([
+        { id: "openai", model: "gpt-4.1", usage: usage(1_000_000, 0) },
+        { id: "openai", model: "gpt-4.1", usage: usage(1_000_000, 0) },
+      ]),
+    );
+    expect(cost).toEqual({
+      totalCost: 4,
+      byParticipant: { openai: 4 },
+      unpriced: 0,
+    });
   });
 
   it("prices custom models via options.models", () => {
@@ -106,7 +128,34 @@ describe("combineCost", () => {
       ]),
       { models: { "my-model": { inputPerMTok: 1, outputPerMTok: 2 } } },
     );
-    expect(cost).toEqual({ totalCost: 3, byParticipant: { local: 3 } });
+    expect(cost).toEqual({
+      totalCost: 3,
+      byParticipant: { local: 3 },
+      unpriced: 0,
+    });
+  });
+
+  it("prices a participant id of __proto__ without hitting the prototype setter", () => {
+    // `label` is caller-supplied, so `__proto__` is reachable. With index assignment
+    // (`byParticipant[id] = …`) the `?? 0` read returns Object.prototype, the sum
+    // becomes a string, the write is dropped, and the whole call returns undefined even
+    // though the run priced fine.
+    const cost = combineCost(
+      resultWith([
+        { id: "__proto__", model: "gpt-4.1", usage: usage(1_000_000, 0) },
+      ]),
+    );
+
+    expect(cost).toEqual({
+      totalCost: 2,
+      byParticipant: { ["__proto__"]: 2 },
+      unpriced: 0,
+    });
+    // A real own property, not a mutated prototype.
+    expect(Object.hasOwn(cost?.byParticipant ?? {}, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(cost?.byParticipant ?? {})).toBe(
+      Object.prototype,
+    );
   });
 
   it("returns undefined when no call is priceable", () => {

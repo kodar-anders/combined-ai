@@ -21,12 +21,24 @@ Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 | `system`         | `string`           | Optional system prompt.                                                                                                     |
 | `model`          | `string`           | Optional per-request model override.                                                                                        |
 | `maxTokens`      | `number`           | Optional output cap (defaults: 16000 complete / 64000 stream).                                                              |
+| `temperature`    | `number`           | Optional sampling temperature, forwarded as-is. **Rejected by several current models** — see the note below.                |
 | `responseFormat` | `ResponseFormat`   | Optional. Constrain the output to a JSON Schema; see [Structured output](#structured-output).                               |
 | `tools`          | `ToolDefinition[]` | Optional. Tools the model may call; see [Tool calling](#tool-calling).                                                      |
 | `toolChoice`     | `ToolChoice`       | Optional. `"auto" \| "any" \| "none" \| { name }`.                                                                          |
 | `signal`         | `AbortSignal`      | Optional. Aborts the request (and an in-flight `stream()` read) when it fires.                                              |
 | `retry`          | `RetryOptions`     | Optional. Overrides the provider's construction-time retry for this call (merged field-wise).                               |
 | `timeoutMs`      | `number`           | Optional. Whole-call wall-clock deadline; see [Retries & cancellation](./errors-retries-fallback.md#retries--cancellation). |
+
+> **`temperature` note — check your model first.** The value is forwarded exactly as
+> given (ranges differ: Anthropic 0–1, OpenAI and Gemini 0–2) and the key is omitted
+> entirely when you don't set it, so existing calls are unaffected. But Anthropic
+> **removed** the parameter on its current line (Opus 4.7+, Sonnet 5, Fable 5 — which
+> includes the default `claude-opus-5`): setting it there is a **400**, not a no-op. Use
+> an older model such as `claude-haiku-4-5`, or leave it unset. Gemini accepts it on
+> every current model, as do `openai-compatible` custom providers; OpenAI's
+> reasoning-tier models have historically rejected non-default values. `temperature: 0`
+> reduces run-to-run variation but is not a seed — these APIs aren't reproducible even
+> at 0. A `NaN`/`Infinity` throws rather than reaching the wire as `null`.
 
 > **Gemini note:** Gemini 2.5 and 3.x models are _thinking_ models, and their
 > internal thinking tokens count against `maxTokens`. A very small cap can be

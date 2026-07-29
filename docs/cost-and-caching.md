@@ -52,14 +52,29 @@ individually from the result's per-call `usage.calls` ledger:
 import { combineCost } from "combined-ai";
 
 const result = await registry.combine({ messages, participants });
-const cost = combineCost(result); // { totalCost, byParticipant } in USD, or undefined
+const cost = combineCost(result);
+// → { totalCost, byParticipant, unpriced } in USD, or undefined
 if (cost) console.log(cost.totalCost);
 ```
 
 It returns `undefined` when nothing is priceable (no usage, or every call's model
-is unknown to the registry). It skips calls whose model the registry doesn't know,
-so `totalCost` can understate a mixed run; pass `options.models` (the same override
-as `costOf`) to price custom-provider models.
+is unknown to the registry). It skips calls it can't price, so `totalCost` can
+understate a mixed run; pass `options.models` (the same override as `costOf`) to price
+custom-provider models.
+
+`unpriced` counts the ledger entries it had to skip, so a genuinely cheap run is
+distinguishable from one where half the ledger was dropped. A call is unpriceable when
+its model is unknown to the registry _or_ its usage reported no prompt tokens. Since a
+run where nothing prices returns `undefined`, `unpriced` always comes alongside at least
+one priced call.
+
+> **`unpriced: 0` is not an all-clear.** It means everything that reached the ledger
+> priced — not that `totalCost` covers the whole run. A call that reported **no usage at
+> all** never enters `usage.calls` (only entries with both a model and usage do), so
+> `combineCost` can neither price it nor count it. Gemini's embedding endpoint reports no
+> usage, and OpenAI-compatible gateways often omit it on completions, so a run using
+> either has billed calls invisible to both numbers. Don't gate billing on
+> `unpriced === 0`.
 
 Pass a **budget** to cap spend. It's a best-effort _soft floor on optional work_
 rather than a hard cap: the phases required to produce an answer (consensus drafts
@@ -124,5 +139,29 @@ await registry.select("anthropic").complete({
 
 Omit `ttl` for the default 5-minute cache; `"1h"` opts into the 1-hour cache (the
 library sends the 1-hour beta header for you). At most 4 breakpoints per request.
-OpenAI and Gemini ignore the marker; `combine` ignores it (its strategies build
-their own prompts). The relevant types are `CacheControl` and `SystemPrompt`.
+OpenAI and Gemini ignore the marker. The relevant types are `CacheControl` and
+`SystemPrompt`.
+
+### Under `combine`
+
+Where the marker sits decides whether it applies:
+
+| Marker on      | `ensemble` / `broadcast` | `consensus` / `pipeline` / `panel`                                                                            |
+| -------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| A content part | Honored                  | Honored in the first phase only (drafts / answers / stage 1); later phases re-render the conversation as text |
+| `system`       | Honored                  | **Throws**                                                                                                    |
+
+The fan-out strategies forward the caller's prompt verbatim, so a breakpoint means
+what you intended. The composing strategies concatenate your text with their own
+per-phase framing into a single string, which leaves no block boundary for the
+breakpoint to mark — so a marker on `system` is rejected rather than silently
+relocated. Move it onto a leading message content part, or use `ensemble`/`broadcast`.
+
+Note that Anthropic's 4-breakpoint limit is enforced inside the provider call, so
+under `combine` exceeding it surfaces as failed participant outcomes rather than a
+thrown error.
+
+**A marker on `system` now counts toward that limit under `ensemble`/`broadcast`.** It
+didn't before 2.0.0, because combine flattened `system` to a string and the marker was
+lost on the way. If you were already at 4 content-part breakpoints and also mark
+`system`, you are now at 5 and those Anthropic participants fail. Drop one marker.

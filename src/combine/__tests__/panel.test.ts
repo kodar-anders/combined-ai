@@ -536,6 +536,39 @@ describe("panel", () => {
     expect(result.perspectiveAgreement?.outlier).toBe("gemini");
   });
 
+  it("reports a failed perspective-agreement embedding without failing the run", async () => {
+    const boom = new Error("embed failed");
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        embed: () => Promise.reject(boom),
+      },
+    };
+    const calls: Call[] = [];
+    const roster = [entry("anthropic", calls), entry("openai", calls)];
+    const events: CombineEvent[] = [];
+
+    const result = await panel(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai"] },
+      { onEvent: (event) => events.push(event) },
+      embedder,
+    );
+
+    expect(result.text).toBe("anthropic:synth");
+    expect(result.perspectiveAgreement).toBeUndefined();
+    expect(result.embeddingError).toBe(boom);
+    expect(events).toContainEqual({ type: "embedding", error: boom });
+  });
+
   it("omits perspectiveAgreement when no embedder is configured", async () => {
     const calls: Call[] = [];
     const roster = [entry("anthropic", calls), entry("openai", calls)];

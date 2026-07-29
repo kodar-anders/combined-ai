@@ -79,18 +79,23 @@ const result = await registry.combine({
 ```
 
 `combine()` accepts the same request fields as `complete()` (`messages`,
-`system`, `model`, `maxTokens`, `signal`, `retry`, `timeoutMs`), applied to every
-participant unless a participant overrides them, plus:
+`system`, `model`, `maxTokens`, `temperature`, `signal`, `retry`, `timeoutMs`),
+applied to every participant unless a participant overrides them, plus:
 
-| Field             | Type                                                                        | Notes                                                                                                    |
-| ----------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `participants`    | `ParticipantSpec[]`                                                         | Required, non-empty. A bare `ProviderName`, or `{ provider, model?, maxTokens?, label?, instruction? }`. |
-| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` \| `"broadcast"` \| `"panel"` | Optional. Defaults to `"consensus"`.                                                                     |
-| `synthesizer`     | `string` (participant id)                                                   | _Consensus & panel._ Who writes the final answer. Defaults to the first participant.                     |
-| `attribution`     | `"attributed"` \| `"anonymized"`                                            | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias.                                    |
-| `minParticipants` | `number`                                                                    | _Consensus only._ Minimum drafts required to proceed (default 2).                                        |
-| `crossExamine`    | `boolean`                                                                   | _Panel only._ Run a review round before synthesis (default `false`).                                     |
-| `responseFormat`  | `ResponseFormat`                                                            | _Ensemble only (required there)._ The shared JSON Schema every model answers under.                      |
+| Field             | Type                                                                        | Notes                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `participants`    | `ParticipantSpec[]`                                                         | Required, non-empty. A bare `ProviderName`, or `{ provider, model?, maxTokens?, temperature?, label?, instruction? }`. |
+| `strategy`        | `"consensus"` \| `"pipeline"` \| `"ensemble"` \| `"broadcast"` \| `"panel"` | Optional. Defaults to `"consensus"`.                                                                                   |
+| `synthesizer`     | `string` (participant id)                                                   | _Consensus & panel._ Who writes the final answer. Defaults to the first participant.                                   |
+| `attribution`     | `"attributed"` \| `"anonymized"`                                            | _Consensus only._ Default `"anonymized"` (Answer A/B/C) reduces bias.                                                  |
+| `minParticipants` | `number`                                                                    | _Consensus only._ Minimum drafts required to proceed (default 2).                                                      |
+| `crossExamine`    | `boolean`                                                                   | _Panel only._ Run a review round before synthesis (default `false`).                                                   |
+| `responseFormat`  | `ResponseFormat`                                                            | _Ensemble only (required there)._ The shared JSON Schema every model answers under.                                    |
+
+> **Set `temperature` per participant on a mixed roster**, not request-wide: several
+> current models reject the parameter outright, and one such participant is enough to fail
+> a whole `consensus` run (its 400s count as failed drafts against `minParticipants`). See
+> [Scoping `temperature`](./docs/strategies.md#scoping-temperature).
 
 **Two ways to call it.** A per-strategy method (`registry.consensus(req)`,
 `.pipeline(req)`, `.ensemble(req)`, `.broadcast(req)`, `.panel(req)`) returns that
@@ -232,6 +237,11 @@ proceeds with the survivors; it throws only when too few remain. It also validat
 the request up front (participants, unique ids, non-empty messages,
 `responseFormat` for ensemble, and so on).
 
+Two shrinkage signals are worth reading rather than inferring: `EnsembleResult.excluded`
+names the participants that didn't vote (and whether the call failed or its JSON was
+unparseable), and `embeddingError` says the optional semantic signal failed rather than
+being switched off.
+
 For the full result-narrowing guide, per-participant models, progress events, and
 the optional **semantic-agreement** signals (`embedding` option), see
 [Combine strategies](./docs/strategies.md). To price a run or cap its spend, see
@@ -358,7 +368,8 @@ Exported from the package entry point:
   `BroadcastRequest`, `PanelRequest`; plus `ParticipantSpec`.
 - Combine result types: `CombineResult` (= `ConsensusResult` | `PipelineResult` |
   `EnsembleResult` | `BroadcastResult` | `PanelResult`), `EnsembleAgreement`,
-  `EnsembleFieldVote`, `EnsembleFieldCandidate`, `SemanticComparison`,
+  `EnsembleFieldVote`, `EnsembleFieldCandidate`, `EnsembleExclusion`,
+  `SemanticComparison`,
   `CombineUsage`, `CallUsage`, `ParticipantOutcome`,
   `StrategyName`, `CombineOptions`, `CombineBudget`, `CombineEmbedding`,
   `CombineEvent`, and the strategy-generic utilities `StrategyRequest<S>` /

@@ -38,8 +38,20 @@ export type RetryOptions = {
  * cache (a higher write premium — sent via Anthropic's extended-cache beta header).
  * Anthropic allows at most 4 breakpoints per request (the provider throws if more
  * are marked). OpenAI ignores it (it caches automatically); Gemini ignores it (it
- * has no per-request breakpoints — implicit caching is automatic); `combine`
- * ignores it (its strategies build their own prompts).
+ * has no per-request breakpoints — implicit caching is automatic).
+ *
+ * **Under `combine`, where the marker sits decides whether it applies:**
+ * - **On a content part** (text/image/file): honored by the phases that send the
+ *   caller's messages as-is — every `ensemble`/`broadcast` call, the `consensus`
+ *   drafts, the `panel` answers, and the `pipeline`'s first stage. Later phases
+ *   re-render the conversation as plain text, so a marker there does not propagate
+ *   (neither do images or files — a known limit of combine's text-only rendering).
+ * - **On `system`, under `ensemble`/`broadcast`**: honored — those strategies forward
+ *   the caller's prompt verbatim.
+ * - **On `system`, under `consensus`/`pipeline`/`panel`**: **throws.** Those
+ *   strategies concatenate the caller's text with their own per-phase framing into one
+ *   string, leaving no block boundary for the breakpoint to mark; it was previously
+ *   accepted and silently dropped, so the optimization never applied.
  */
 export type CacheControl = { ttl?: "1h" };
 
@@ -215,6 +227,34 @@ export type CompletionRequest = {
   model?: string;
   /** Override the provider's default output-token cap. */
   maxTokens?: number;
+  /**
+   * Sampling temperature, forwarded to the provider as given. The ranges differ
+   * (Anthropic 0–1; OpenAI and Gemini 0–2) and the provider validates its own, so no
+   * normalization happens here. Omitted from the request entirely when unset, so the
+   * provider's own default applies. Must be a finite number — `NaN`/`Infinity` throws,
+   * because it would otherwise reach the wire as `null`.
+   *
+   * **Anthropic's current models reject it outright.** The parameter was removed on the
+   * Opus 4.7+/Sonnet 5/Fable 5 line — including this library's default `claude-opus-5` —
+   * so setting it there is a 400, not a no-op. Use an older model (e.g.
+   * `claude-haiku-4-5`) or omit it. Gemini accepts it on every current model. OpenAI's
+   * reasoning-tier models have historically rejected non-default values; unverified for
+   * the `gpt-5.6` family, so treat it as untested there. It works on
+   * `openai-compatible` custom providers (OpenRouter, Groq, Together, Ollama, …).
+   *
+   * In `combine` this is request-wide: it reaches **every** participant and **every**
+   * phase, so a temperature set for diverse drafts also applies to critique, synthesis
+   * and the sanitizing rewrite. **On a mixed roster, set it per participant instead**
+   * (`ParticipantSpec.temperature`, which wins over this) — a request-wide value hits
+   * participants whose model rejects the parameter, and for `consensus` those failures
+   * can drop the survivor count below `minParticipants` and fail the entire run. There
+   * is no per-phase override.
+   *
+   * `0` reduces run-to-run variation but does **not** make a call deterministic: MoE
+   * routing and request batching leave these APIs non-reproducible even at 0. Treat it
+   * as variance reduction, not a seed.
+   */
+  temperature?: number;
   /**
    * Constrain the output to a JSON Schema. The model returns JSON in `text`, and
    * `complete()` also surfaces the parsed value on {@link CompletionResult.parsed}.

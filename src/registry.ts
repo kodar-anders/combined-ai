@@ -47,7 +47,11 @@ import {
 } from "./providers/anthropic";
 import { GoogleProvider, type GoogleProviderOptions } from "./providers/google";
 import { OpenAIProvider, type OpenAIProviderOptions } from "./providers/openai";
-import { assertValidTimeoutMs, type RetryOptions } from "./transport";
+import {
+  assertValidTemperature,
+  assertValidTimeoutMs,
+  type RetryOptions,
+} from "./transport";
 import {
   type EmbeddingOptions,
   type EmbeddingResult,
@@ -234,6 +238,7 @@ export class ProviderRegistry {
   ): Promise<ConsensusResult> {
     const { roster, ids, firstId } = this.#prepare(request);
     this.#rejectResponseFormat(request, "consensus");
+    this.#rejectSystemCacheControl(request, "consensus");
     this.#validateConsensusOptions(request, ids);
     const synthesizer = request.synthesizer ?? firstId;
     const embedder = this.#resolveEmbedder(options?.embedding);
@@ -250,6 +255,7 @@ export class ProviderRegistry {
   ): Promise<PipelineResult> {
     const { roster } = this.#prepare(request);
     this.#rejectResponseFormat(request, "pipeline");
+    this.#rejectSystemCacheControl(request, "pipeline");
     return runPipeline(roster, request, options);
   }
 
@@ -311,6 +317,7 @@ export class ProviderRegistry {
   ): Promise<PanelResult> {
     const { roster, ids, firstId } = this.#prepare(request);
     this.#rejectResponseFormat(request, "panel");
+    this.#rejectSystemCacheControl(request, "panel");
     this.#validateSynthesizer(request, ids);
     const synthesizer = request.synthesizer ?? firstId;
     const embedder = this.#resolveEmbedder(options?.embedding);
@@ -427,10 +434,11 @@ export class ProviderRegistry {
         "combine does not support tool calling (tools/toolChoice); use registry.select() for a single-provider tool loop.",
       );
     }
-    // Validate `timeoutMs` up front: `completionFor` forwards it into every
-    // participant call, and each of those runs through `runOutcome`, which would
+    // Validate `timeoutMs`/`temperature` up front: `completionFor` forwards both into
+    // every participant call, and each of those runs through `runOutcome`, which would
     // otherwise catch the validation throw as N participant failures and bury it.
     assertValidTimeoutMs(request.timeoutMs);
+    assertValidTemperature(request.temperature);
     const roster: RosterEntry[] = normalized.map((p) => ({
       ...p,
       provider: this.select(p.providerName),
@@ -450,6 +458,27 @@ export class ProviderRegistry {
     if (request.responseFormat !== undefined) {
       throw new Error(
         `responseFormat is only supported by the "ensemble" strategy, not "${strategy}".`,
+      );
+    }
+  }
+
+  /**
+   * Reject a {@link SystemPrompt} cache marker on a strategy that composes its own
+   * system prompt. `consensus`/`pipeline`/`panel` concatenate the caller's text with
+   * their own per-phase framing into a single string, which leaves no block boundary
+   * for the breakpoint to mark — it could only be silently relocated to cover the
+   * framing too. It was previously accepted and discarded, so the caller's cache
+   * optimization never applied; reject it loudly instead. `ensemble` and `broadcast`
+   * forward the caller's prompt verbatim, so they honor it.
+   */
+  #rejectSystemCacheControl(
+    request: CombineRequestBase,
+    strategy: StrategyName,
+  ): void {
+    const { system } = request;
+    if (typeof system === "object" && system.cacheControl !== undefined) {
+      throw new Error(
+        `cacheControl on \`system\` is not supported by the "${strategy}" strategy, which composes its own system prompt. Remove it, move the marker onto a leading message content part, or use the "ensemble" or "broadcast" strategy (both forward the prompt verbatim).`,
       );
     }
   }
@@ -562,6 +591,14 @@ function normalizeParticipant(
       `combine participant for "${spec.provider}" has an invalid maxTokens (${String(spec.maxTokens)}); must be a positive integer.`,
     );
   }
+  // Finiteness only — unlike maxTokens, `0` is a meaningful temperature, and the valid
+  // range is the provider's to enforce. A non-finite value is ours: it would reach the
+  // wire as `null` (see assertValidTemperature).
+  if (spec.temperature !== undefined && !Number.isFinite(spec.temperature)) {
+    throw new Error(
+      `combine participant for "${spec.provider}" has an invalid temperature (${String(spec.temperature)}); must be a finite number.`,
+    );
+  }
   const id =
     spec.label ??
     (spec.model === undefined
@@ -572,6 +609,7 @@ function normalizeParticipant(
     providerName: spec.provider,
     model: spec.model,
     maxTokens: spec.maxTokens,
+    temperature: spec.temperature,
     instruction: spec.instruction,
   };
 }

@@ -83,6 +83,26 @@ export function assertValidTimeoutMs(timeoutMs: number | undefined): void {
 }
 
 /**
+ * Validate a per-request `temperature`. Only **finiteness** is checked, not the range:
+ * the providers disagree on the range (Anthropic 0–1, OpenAI and Gemini 0–2) and are the
+ * authority on it, so a range error is theirs to report. A non-finite value is ours,
+ * because `JSON.stringify({ temperature: NaN })` yields `{"temperature":null}` — the
+ * wire value silently becomes something the caller never asked for, and comes back as an
+ * opaque provider type error. A no-op when `temperature` is `undefined`.
+ */
+export function assertValidTemperature(temperature: number | undefined): void {
+  if (temperature === undefined) {
+    return;
+  }
+  if (!Number.isFinite(temperature)) {
+    // eslint-disable-next-line unicorn/prefer-type-error -- `NaN`/`Infinity` are the right *type*; this is an invalid value, and a plain Error keeps it consistent with assertValidTimeoutMs.
+    throw new Error(
+      `temperature must be a finite number; got ${String(temperature)}.`,
+    );
+  }
+}
+
+/**
  * Combine the caller's abort `signal` with a `timeoutMs` deadline. Returns `signal`
  * unchanged when no timeout is set; otherwise an {@link AbortSignal} that aborts when
  * either the caller aborts or the timeout elapses. The timeout signal aborts with a

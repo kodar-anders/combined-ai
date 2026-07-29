@@ -367,32 +367,46 @@ describe("broadcast semantic comparison", () => {
       entry("openai", fakeProvider("openai", calls, { text: "" })),
     ];
 
+    const events: CombineEvent[] = [];
     const result = await broadcast(
       roster,
       request({ participants: ["anthropic", "openai"] }),
-      undefined,
+      { onEvent: (event) => events.push(event) },
       fakeEmbedder(),
     );
 
     expect(result.semantic).toBeUndefined();
+    // Declining (too few answers to compare) is a normal outcome, not a failure — so
+    // no error field and no event.
+    expect(result.embeddingError).toBeUndefined();
+    expect(events.filter((e) => e.type === "embedding")).toEqual([]);
   });
 
-  it("does not fail the broadcast when the embedding pass throws", async () => {
+  it("reports a failed embedding pass instead of swallowing it", async () => {
     const calls: Call[] = [];
     const roster = [
       entry("anthropic", fakeProvider("anthropic", calls, { text: "A" })),
       entry("openai", fakeProvider("openai", calls, { text: "B" })),
     ];
 
+    const events: CombineEvent[] = [];
     const result = await broadcast(
       roster,
       request({ participants: ["anthropic", "openai"] }),
-      undefined,
+      { onEvent: (event) => events.push(event) },
       fakeEmbedder({ fail: true }),
     );
 
+    // Still not fatal — the answers were already paid for.
     expect(result.responses).toHaveLength(2);
     expect(result.semantic).toBeUndefined();
+    // But observable, so "the embedder is broken" is distinguishable from "no
+    // embedder was configured".
+    expect(result.embeddingError?.message).toBe("embed failed");
+    expect(events).toContainEqual({
+      type: "embedding",
+      error: result.embeddingError,
+    });
   });
 
   it("produces no semantic field when no embedder is configured", async () => {

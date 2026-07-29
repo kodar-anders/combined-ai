@@ -171,6 +171,49 @@ describe("consensus", () => {
     );
   });
 
+  it("applies a per-participant temperature to every phase that participant runs", async () => {
+    // The scoping guarantee: temperature is per participant, not per phase, so the one
+    // that set it carries it through draft, critique, synthesis and sanitize — while the
+    // participant that didn't never sees the key at all. That's what lets a mixed roster
+    // keep the parameter away from a model that rejects it.
+    const calls: Call[] = [];
+    const roster = [
+      {
+        id: "anthropic",
+        providerName: "anthropic" as const,
+        provider: fakeProvider("anthropic", calls),
+        temperature: 0.7,
+      },
+      {
+        id: "openai",
+        providerName: "openai" as const,
+        provider: fakeProvider("openai", calls),
+      },
+    ];
+
+    await consensus(roster, "anthropic", {
+      ...PROMPT,
+      participants: ["anthropic", "openai"],
+    });
+
+    const anthropicCalls = calls.filter((c) => c.provider === "anthropic");
+    const openaiCalls = calls.filter((c) => c.provider === "openai");
+    // Synthesizer is anthropic, so it also runs synth + sanitize.
+    expect(anthropicCalls.map((c) => c.phase)).toEqual([
+      "draft",
+      "critique",
+      "synth",
+      "sanitize",
+    ]);
+    expect(anthropicCalls.every((c) => c.request.temperature === 0.7)).toBe(
+      true,
+    );
+    expect(openaiCalls.length).toBeGreaterThan(0);
+    expect(
+      openaiCalls.every((c) => !Object.hasOwn(c.request, "temperature")),
+    ).toBe(true);
+  });
+
   it("accepts an object-form system prompt, forwarding only its text", async () => {
     const calls: Call[] = [];
     const roster = [
@@ -1393,6 +1436,50 @@ describe("consensus cost ledger + budget", () => {
       ["anthropic", "openai"],
       ["gemini"],
     ]);
+  });
+
+  it("reports a failed draft-agreement embedding without failing the run", async () => {
+    // The embedding here is launched before the critique phase and awaited only when
+    // the result is built, so its failure has to survive that round trip as a settled
+    // value rather than a rejection — and still be distinguishable from a comparison
+    // that merely declined.
+    const boom = new Error("embed failed");
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        embed: () => Promise.reject(boom),
+      },
+    };
+    const calls: Call[] = [];
+    const roster = (["anthropic", "openai"] as const).map((name) => ({
+      id: name,
+      providerName: name,
+      provider: fakeProvider(name, calls),
+    }));
+    const events: CombineEvent[] = [];
+
+    const result = await consensus(
+      roster,
+      "anthropic",
+      { ...PROMPT, participants: ["anthropic", "openai"] },
+      { onEvent: (event) => events.push(event) },
+      embedder,
+    );
+
+    // The full draft → critique → synthesis run still completed.
+    expect(result.text).toBe("anthropic:synth");
+    expect(result.drafts).toHaveLength(2);
+    expect(result.critiques).toHaveLength(2);
+    expect(result.draftAgreement).toBeUndefined();
+    expect(result.embeddingError).toBe(boom);
+    expect(events).toContainEqual({ type: "embedding", error: boom });
   });
 
   it("omits draftAgreement when no embedder is configured", async () => {

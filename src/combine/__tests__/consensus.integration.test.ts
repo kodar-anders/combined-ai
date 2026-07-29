@@ -60,12 +60,25 @@ describeLive("ProviderRegistry.combine consensus (live)", () => {
           onEvent: (event) => {
             events.push(event);
             // Print progress as the live run unfolds.
-            if (event.type === "phase") {
-              console.log(`→ ${event.phase}`);
-            } else if (event.type === "budget") {
-              console.log(`  budget: spent ${String(event.spentUsd)}`);
-            } else {
-              console.log(`  ${event.type} ${event.provider}: ${event.status}`);
+            switch (event.type) {
+              case "phase":
+                console.log(`→ ${event.phase}`);
+
+                break;
+              case "budget":
+                console.log(`  budget: spent ${String(event.spentUsd)}`);
+
+                break;
+              case "embedding":
+                console.log(`  embedding failed: ${event.error.message}`);
+
+                break;
+              default:
+                // The remaining variants are all settlement events, so they carry an
+                // outcome (`provider`/`status`).
+                console.log(
+                  `  ${event.type} ${event.provider}: ${event.status}`,
+                );
             }
           },
         },

@@ -89,6 +89,13 @@ How the merge works (field-wise over the union of top-level keys):
   named fields).
 - **The merge is shallow**: it votes on nested objects/arrays as whole values.
   Keep schemas to flat fields for the most useful per-field agreement.
+- **`excluded` names the participants that didn't vote**, with a `reason` of
+  `"failed"` (the call threw) or `"unparsed"` (it succeeded but its `parsed` wasn't a
+  plain object — no valid JSON, most often a response truncated at the token cap, or an
+  array/scalar root). Worth checking: a `"failed"` entry is visible in `responses`
+  anyway, but an `"unparsed"` one is otherwise silent, so an apparently unanimous
+  three-way vote can really have been a one-way one. The invariant is
+  `responses.length - excluded.length === agreement.validResponseCount`.
 - Optional [semantic agreement](#semantic-comparison-optional) over string fields
   via an `embedding` option.
 
@@ -162,8 +169,21 @@ It is **always informational** and never changes a returned or merged value. The
 embedding provider must be configured and support embeddings (so not
 `"anthropic"`); all answers go through this one model because cross-provider
 vectors aren't comparable. The embedding call's usage folds into `result.usage`,
-and the comparison is omitted when it can't be computed (fewer than two non-empty
-answers, or the embedding call fails).
+and the comparison is omitted when it can't be computed.
+
+Two reasons it can be missing, and they're distinguishable:
+
+- **Declined** — fewer than two non-empty answers to compare, or the provider returned a
+  vector count that didn't match its input. Normal; nothing is reported.
+- **Failed** — the embedding call threw (bad key, rate limit, aborted request). The run
+  still succeeds, but `result.embeddingError` carries the error and an `embedding`
+  progress event fires. That's the same field name on every strategy, so "the embedder is
+  broken" never looks like "no embedder was configured".
+
+For `consensus` and `panel` the comparison is launched before the critique/review phase
+so it overlaps the model calls, which means the `embedding` event can arrive anywhere in
+the stream — match on membership, not position. If every synthesizer fails those
+strategies throw, and then the event is the only signal (there is no result).
 
 Where each strategy exposes it:
 
@@ -199,8 +219,35 @@ await registry.combine({
 ```
 
 `combine()` rejects two participants that resolve to the same id unless you give
-one an explicit `label`. A participant's `model`/`maxTokens` take precedence over
-the request-wide values.
+one an explicit `label`. A participant's `model`/`maxTokens`/`temperature` take
+precedence over the request-wide values.
+
+### Scoping `temperature`
+
+`temperature` is the one override you usually **want** per participant rather than
+request-wide, because several current models reject the parameter outright (Anthropic
+removed it on Opus 4.7+/Sonnet 5/Fable 5 — see
+[Request options](./single-provider.md#request-options)). A request-wide value reaches
+every participant, so one participant on such a model turns all of its calls into 400s —
+and under `consensus` those count as failed drafts, which can drop the survivor count
+below `minParticipants` and fail the whole run.
+
+```ts
+await registry.combine({
+  messages,
+  participants: [
+    { provider: "google", temperature: 1.1 }, //             Gemini accepts it
+    { provider: "openai", model: "gpt-4.1", temperature: 1.1 },
+    { provider: "anthropic" }, //                            left alone — its model would 400
+  ],
+});
+```
+
+Overrides **replace**, they never clear: there is no way to exempt one participant from an
+inherited `request.temperature`. On a mixed roster leave the request-wide value unset and
+name the participants individually. A participant's temperature applies to every call it
+makes — its critique/review and synthesis turns included — so temperature is per
+participant, not per phase.
 
 ## Reading the result
 
@@ -307,6 +354,9 @@ await registry.combine(
             `  budget: skipped ${event.skipped ?? "(under-enforced)"}`,
           );
           break;
+        case "embedding": // the optional semantic signal failed (never fatal)
+          console.log(`  embedding failed: ${event.error.message}`);
+          break;
       }
     },
   },
@@ -340,7 +390,9 @@ Before rendering that content, know what it is:
   own, so only the resolved result's `text` is authoritative.
 - **Events are not a cost ledger.** Summing `event.result.usage` understates the
   run: synthesis attempts (including discarded ones), every sanitize pass, and any
-  embedding call are billed but emit no event. Use `combineCost(result)`.
+  embedding call are billed but emit no event for the work they did. (An `embedding`
+  event fires only when the embedding _fails_, and carries no usage.) Use
+  `combineCost(result)`.
 - **A `critique` under the default `attribution: "anonymized"` refers to `Answer
 A`/`Answer B`** headings the event can't resolve back to a participant. Use
   `attribution: "attributed"` if you need critique text to be self-describing.
@@ -352,9 +404,11 @@ A`/`Answer B`** headings the event can't resolve back to a participant. Use
   (the emitter swallows the error, so the run is unaffected) — copy before editing,
   e.g. `{ ...event.result, text: redact(event.result.text) }`. The freeze is shallow:
   nested `usage`/`parsed` aren't frozen, so treat those as read-only by convention.
-- **Neither serializer round-trips the `error`.** `JSON.stringify` omits its
-  `message` (non-enumerable on `Error`), keeping only a `ProviderError`'s own fields;
-  `structuredClone` keeps the message but downgrades a `ProviderError` to a plain
-  `Error`, dropping `status`/`kind`/`code`. Map what you need to a plain object
-  yourself (e.g. `{ message: error.message, status }`). An event also copies the
-  participant's whole output text, so logging events wholesale isn't cheap.
+- **`JSON.stringify` round-trips a `ProviderError`, but nothing else.**
+  `ProviderError` implements `toJSON`, so stringifying one gives you `message` plus
+  `provider`/`kind`/`status`/`code`/`type` (the raw `body` is omitted — it's already
+  embedded in `message`). A failure that _isn't_ a `ProviderError` (a bug in a BYO
+  provider) is a plain `Error`, which stringifies to `{}` — read `error.message`
+  explicitly for those. `structuredClone` still downgrades a `ProviderError` to a plain
+  `Error`, dropping `status`/`kind`/`code`, so prefer `JSON.stringify`. An event also
+  copies the participant's whole output text, so logging events wholesale isn't cheap.

@@ -39,6 +39,25 @@ try {
 }
 ```
 
+### Serializing an error
+
+`ProviderError` implements `toJSON`, so plain `JSON.stringify` produces something
+useful — `{ name, message, provider, kind, status?, code?, type? }` — for logging,
+shipping to a worker, or persisting an outcome for replay:
+
+```ts
+JSON.stringify(err);
+// {"name":"ProviderError","message":"openai request failed (429): …",
+//  "provider":"openai","kind":"api","status":429,"code":"rate_limit_exceeded"}
+```
+
+Two things to know. The raw `body` is deliberately omitted — `message` already
+contains it verbatim, so including it would double a large payload; read `err.body`
+off the live object if you want it separately. And undefined fields are dropped, so a
+transport error serializes to just `{ name, message, provider, kind }`. Prefer this to
+`structuredClone`, which keeps the message but downgrades the error to a plain `Error`,
+losing `status`/`kind`/`code`.
+
 `complete()` also throws (`kind: "api"`, `status: 200`) if a provider or proxy
 returns HTTP 200 with an `{ error }` body, rather than yielding an empty result.
 For `combine()`, the run records individual provider failures rather than

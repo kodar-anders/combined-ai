@@ -141,6 +141,31 @@ describe("OpenAIProvider.complete", () => {
     expect(body.messages).toEqual([{ role: "user", content: "Hi" }]);
   });
 
+  it("sends temperature only when set, including 0", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: "gpt-4.1-mini",
+          choices: [{ message: { content: "ok" } }],
+        }),
+    }));
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test" });
+    // 0 is the interesting value — a truthiness check would drop it.
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      temperature: 0,
+    });
+    await provider.complete({ messages: [{ role: "user", content: "Hi" }] });
+
+    const [, set] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(set.body as string).temperature).toBe(0);
+    // Omitted when unset: the reasoning-tier models reject a non-default value.
+    const [, unset] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(unset.body as string)).not.toHaveProperty("temperature");
+  });
+
   it("honors an explicit model and maxTokens", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,

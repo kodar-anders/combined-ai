@@ -41,6 +41,24 @@ export type ParticipantSpec =
       /** maxTokens for this participant. Falls back to `request.maxTokens`. */
       maxTokens?: number;
       /**
+       * Sampling temperature for this participant. Falls back to `request.temperature`.
+       *
+       * **Use this rather than `request.temperature` on a mixed roster.** A request-wide
+       * value reaches every participant, and several current models *reject* the
+       * parameter outright (see {@link CompletionRequest.temperature}) — so one
+       * participant on such a model turns every one of its calls into a 400, which for
+       * `consensus` can drop the survivor count below `minParticipants` and fail the
+       * whole run. Setting it per participant scopes it to the ones that accept it.
+       *
+       * There is no way to *clear* an inherited value for one participant (overrides
+       * replace, they don't unset — same as `model`/`maxTokens`), so on a mixed roster
+       * leave `request.temperature` unset and name the participants individually.
+       *
+       * Applies to every call this participant makes, including its critique/review and
+       * synthesis turns — temperature is per participant, not per phase.
+       */
+      temperature?: number;
+      /**
        * Unique id for this participant in results/events/usage and for `synthesizer`.
        * Defaults to the provider name, or `<provider>-<model>` when `model` is set.
        * Required (must be set explicitly) only to disambiguate two participants that
@@ -246,6 +264,11 @@ export type ConsensusResult = {
    * the more actionable half.
    */
   draftAgreement?: SemanticComparison;
+  /**
+   * Why {@link draftAgreement} is missing, when an embedder was configured but the
+   * comparison threw. See the shared note on {@link BroadcastResult.embeddingError}.
+   */
+  embeddingError?: Error;
   /** Aggregated token usage across every call, or `undefined` if none was reported. */
   usage?: CombineUsage;
 };
@@ -343,6 +366,21 @@ export type EnsembleFieldVote = {
 };
 
 /**
+ * A participant whose response took no part in the ensemble vote, and why.
+ *
+ * - `"failed"` — the call threw; its `responses` entry carries the `error`.
+ * - `"unparsed"` — the call succeeded but its `parsed` wasn't a plain object: either no
+ *   valid JSON at all (most often a response truncated at the token cap, which leaves
+ *   `parsed` undefined) or an array/scalar root, which the field-wise merge has no
+ *   named fields to work with.
+ */
+export type EnsembleExclusion = {
+  /** The participant's unique id (see {@link ParticipantSpec.label}). */
+  id: string;
+  reason: "failed" | "unparsed";
+};
+
+/**
  * The result of the `ensemble` strategy (each participant returns the same typed
  * object; the objects are merged field-wise by majority vote — with no LLM
  * synthesis — so every merged value is one a model actually returned).
@@ -378,6 +416,26 @@ export type EnsembleResult = {
    * deterministic exact-match vote, never chosen by similarity.
    */
   semanticAgreement?: Record<string, number>;
+  /**
+   * Why {@link semanticAgreement} is missing, when an embedder was configured but the
+   * scoring threw. See the shared note on {@link BroadcastResult.embeddingError}. The
+   * mechanical vote — `merged`, `agreement`, `votes` — is unaffected either way.
+   */
+  embeddingError?: Error;
+  /**
+   * The participants that took no part in the vote, and why (see
+   * {@link EnsembleExclusion}), in participant order. Empty when every participant
+   * contributed. Invariant:
+   * `responses.length - excluded.length === agreement.validResponseCount`.
+   *
+   * Worth reading even when `merged` looks healthy. A `"failed"` exclusion is visible
+   * in `responses` anyway, but an `"unparsed"` one is otherwise silent — a response
+   * truncated at the token cap drops that participant from the merge with no event and
+   * no throw, so an apparently unanimous three-way vote can really have been a one-way
+   * one. `agreement` reflects the shrunken roster honestly (its denominator is
+   * `validResponseCount`), but nothing else tells you the roster shrank.
+   */
+  excluded: EnsembleExclusion[];
   /** Each participant's structured response, in participant order (includes failures). */
   responses: ParticipantOutcome[];
   /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
@@ -427,6 +485,25 @@ export type BroadcastResult = {
    * came back. Informational: every raw response is still returned unchanged.
    */
   semantic?: SemanticComparison;
+  /**
+   * Why the semantic signal is missing, when {@link CombineOptions.embedding} was set
+   * but the embedding call threw (a bad key, a rate limit, an aborted request). The
+   * failure is deliberately not fatal — the signal is informational and the answers were
+   * already produced — but it is reported rather than swallowed, so "the embedder is
+   * broken" is distinguishable from "no embedder was configured".
+   *
+   * Absent when the comparison succeeded, when no embedder was set, and when the
+   * comparison merely **declined** (fewer than two answers to compare, or a provider
+   * returning a vector count that didn't match its input): declining is a normal
+   * outcome, not an error. A matching `embedding` {@link CombineEvent} is emitted on
+   * failure, which is the only signal available if the strategy goes on to throw.
+   *
+   * Named for the cause rather than the field it blocks, and spelled the same way on
+   * every strategy that computes a semantic signal — deliberately, even though the
+   * signals themselves are named per strategy (`semantic` / `draftAgreement` /
+   * `perspectiveAgreement` / `semanticAgreement`).
+   */
+  embeddingError?: Error;
   /** Aggregated token usage across every participant call, or `undefined` if none was reported. */
   usage?: CombineUsage;
 };
@@ -454,6 +531,11 @@ export type PanelResult = {
    * divergent role.
    */
   perspectiveAgreement?: SemanticComparison;
+  /**
+   * Why {@link perspectiveAgreement} is missing, when an embedder was configured but the
+   * comparison threw. See the shared note on {@link BroadcastResult.embeddingError}.
+   */
+  embeddingError?: Error;
   /** Aggregated token usage across every call, or `undefined` if none was reported. */
   usage?: CombineUsage;
 };
@@ -538,12 +620,15 @@ export type ResultFor<S extends StrategyName> = Extract<
  * editing. The freeze is shallow: nested `usage`/`parsed` are not frozen, so treat
  * those as read-only by convention.
  *
- * Shipping an event elsewhere (a log sink, a worker, an SSE feed) needs care with the
- * `error`: `JSON.stringify` omits its `message` (non-enumerable on `Error`), keeping
- * only a `ProviderError`'s own fields, while `structuredClone` keeps the message but
- * downgrades a `ProviderError` to a plain `Error`, dropping `status`/`kind`/`code`.
- * Neither round-trips it — map what you need to a plain object yourself (e.g.
- * `{ message: error.message, status }`). Note too that an event copies the
+ * Shipping an event elsewhere (a log sink, a worker, an SSE feed) works for the common
+ * case: a `ProviderError` implements `toJSON`, so plain `JSON.stringify` round-trips its
+ * `message` plus `provider`/`kind`/`status`/`code`/`type` (the raw `body` is omitted —
+ * it is already inside `message`). Two caveats remain. A failure that isn't a
+ * `ProviderError` — a bug in a BYO provider, say — is a plain `Error`, and
+ * `JSON.stringify` yields `{}` for that, because `message` is non-enumerable and there
+ * is no `toJSON`; read `error.message` explicitly if you need it. And `structuredClone`
+ * still keeps the message but downgrades a `ProviderError` to a plain `Error`, dropping
+ * `status`/`kind`/`code` — prefer `JSON.stringify`. Note too that an event copies the
  * participant's whole output text, so logging events wholesale is not cheap.
  */
 export type CombineEvent =
@@ -577,6 +662,29 @@ export type CombineEvent =
       /** A participant settled in an `ensemble` or `broadcast` run. */
       type: "response";
     } & ParticipantOutcome)
+  | {
+      /**
+       * The optional embedding-backed semantic signal failed, so the strategy's
+       * semantic field is omitted from the result (see `embeddingError` there). Emitted
+       * **only on failure** — a successful comparison emits nothing, and neither does one
+       * that simply declined (fewer than two answers to compare, or a provider returning
+       * a vector count that didn't match its input). The run is unaffected: the answers
+       * were already produced and are returned as-is.
+       *
+       * Carries no {@link ParticipantOutcome} — the embedding call is not a participant
+       * (its tokens land in `usage.calls` under `embedding:<provider>`).
+       *
+       * **Timing is not deterministic in `consensus`/`panel`.** Those strategies launch
+       * the comparison before the critique/review phase so it overlaps the LLM calls, so
+       * this event can arrive anywhere among their `critique`/`review`/`phase` events —
+       * match on membership, not position. It can also arrive *after* the combine has
+       * already rejected (when every synthesizer failed the strategy throws without
+       * waiting for the embedding), in which case it is the only signal you get, since
+       * there is no result to carry `embeddingError`.
+       */
+      type: "embedding";
+      error: Error;
+    }
   | {
       /**
        * A {@link CombineBudget} signal. Two cases, distinguished by which field is

@@ -31,6 +31,7 @@ import {
   type CombineOptions,
   type CombineRequest,
   type EnsembleAgreement,
+  type EnsembleExclusion,
   type EnsembleFieldCandidate,
   type EnsembleFieldVote,
   type EnsembleResult,
@@ -43,6 +44,7 @@ import {
   outcomeUsage,
   respondAll,
   type RosterEntry,
+  runEmbedding,
 } from "./shared";
 
 /**
@@ -73,11 +75,23 @@ export async function ensemble(
   // needed. The id travels *with* its object rather than in a parallel array — the
   // merge attributes every value to a participant, and zipping two arrays by index
   // is what `noUncheckedIndexedAccess` exists to discourage.
-  const valid = responses.flatMap((o) =>
-    o.status === "ok" && isPlainObject(o.result.parsed)
-      ? [{ id: o.id, object: o.result.parsed }]
-      : [],
-  );
+  //
+  // One loop builds both lists (rather than a second pass for `excluded`) so the two
+  // cannot disagree — the same reasoning that derives `absent` from the voters in
+  // `mergeField`. It's what makes the documented
+  // `responses.length - excluded.length === validResponseCount` invariant hold by
+  // construction.
+  const valid: ValidResponse[] = [];
+  const excluded: EnsembleExclusion[] = [];
+  for (const o of responses) {
+    if (o.status !== "ok") {
+      excluded.push({ id: o.id, reason: "failed" });
+    } else if (isPlainObject(o.result.parsed)) {
+      valid.push({ id: o.id, object: o.result.parsed });
+    } else {
+      excluded.push({ id: o.id, reason: "unparsed" });
+    }
+  }
 
   if (valid.length === 0) {
     throw noResultError(
@@ -91,23 +105,23 @@ export async function ensemble(
   // Optional, informational: a meaning-aware companion to the exact-match vote.
   // For each string-valued field, embed the participants' values (one batch call)
   // and score their mean pairwise similarity. It never changes `merged` — that
-  // stays the deterministic exact-match vote. A failure is swallowed.
+  // stays the deterministic exact-match vote — so a failure is reported
+  // (`embeddingError` + an `embedding` event) rather than fatal.
   const usageEntries = outcomeUsage(responses);
-  let semanticAgreement: Record<string, number> | undefined;
-  if (embedder !== undefined) {
-    try {
-      const scored = await fieldSemanticAgreement(
-        embedder,
-        collectStringFields(valid.map((v) => v.object)),
-        request.signal,
-      );
-      if (scored !== undefined) {
-        semanticAgreement = scored.agreement;
-        usageEntries.push(scored.usage);
-      }
-    } catch {
-      // Informational; keep the merge we already have.
-    }
+  const embedded =
+    embedder === undefined
+      ? {}
+      : await runEmbedding(
+          () =>
+            fieldSemanticAgreement(
+              embedder,
+              collectStringFields(valid.map((v) => v.object)),
+              request.signal,
+            ),
+          emit,
+        );
+  if (embedded.value !== undefined) {
+    usageEntries.push(embedded.value.usage);
   }
 
   return {
@@ -116,7 +130,13 @@ export async function ensemble(
     merged,
     agreement,
     votes,
-    ...(semanticAgreement === undefined ? {} : { semanticAgreement }),
+    ...(embedded.value === undefined
+      ? {}
+      : { semanticAgreement: embedded.value.agreement }),
+    ...(embedded.embeddingError === undefined
+      ? {}
+      : { embeddingError: embedded.embeddingError }),
+    excluded,
     responses,
     usage: aggregateUsage(usageEntries),
   };
@@ -126,6 +146,22 @@ export async function ensemble(
  * Collect each field's **string** values across the valid responses, in
  * first-seen key order. Non-string values are skipped (semantic agreement only
  * applies to free text; enums/numbers/booleans use the exact-match vote).
+ *
+ * **Blank values are skipped too**, and that is load-bearing rather than tidiness:
+ * {@link fieldSemanticAgreement} embeds every eligible field's values in a *single*
+ * batch call, and OpenAI's embeddings endpoint rejects an empty-string input — so one
+ * `""` anywhere would fail the whole request and cost `semanticAgreement` for *every*
+ * field. Schemas that can't express an optional field (the cross-provider strict-mode
+ * rules push callers toward `""` as "absent") would otherwise lose the signal entirely.
+ * This is the only path that can produce a blank: `compareAnswers`' callers filter
+ * empty answers out before comparing.
+ *
+ * A field left with fewer than two values is then skipped downstream by
+ * `fieldSemanticAgreement`'s own eligibility gate. Note the consequence: a field's
+ * semantic score can be computed over fewer values than
+ * {@link EnsembleAgreement.byField}'s denominator, which stays *all* valid responses.
+ * Acceptable for an informational signal, and it keeps the exact-match vote — which
+ * does count a `""` as a real value — authoritative.
  */
 function collectStringFields(
   objects: Array<Record<string, unknown>>,
@@ -133,7 +169,7 @@ function collectStringFields(
   const byKey = new Map<string, string[]>();
   for (const object of objects) {
     for (const [key, value] of Object.entries(object)) {
-      if (typeof value !== "string") {
+      if (typeof value !== "string" || value.trim() === "") {
         continue;
       }
       const values = byKey.get(key);

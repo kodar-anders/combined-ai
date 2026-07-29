@@ -133,6 +133,36 @@ describe("GoogleProvider.complete", () => {
     ]);
   });
 
+  it("sends temperature on generationConfig, not the body root, and only when set", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          modelVersion: "gemini-3.6-flash",
+          candidates: [{ content: { parts: [{ text: "ok" }] } }],
+        }),
+    }));
+
+    const provider = new GoogleProvider({ apiKey: "key-test" });
+    // 0 is the interesting value — a truthiness check would drop it.
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      temperature: 0,
+    });
+    await provider.complete({ messages: [{ role: "user", content: "Hi" }] });
+
+    const [, set] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(set.body as string);
+    // Gemini nests sampling params — at the root it would be silently ignored.
+    expect(body.generationConfig.temperature).toBe(0);
+    expect(body).not.toHaveProperty("temperature");
+
+    const [, unset] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(
+      JSON.parse(unset.body as string).generationConfig,
+    ).not.toHaveProperty("temperature");
+  });
+
   it("honors an explicit model and maxTokens", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,

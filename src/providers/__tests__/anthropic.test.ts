@@ -80,6 +80,47 @@ describe("AnthropicProvider.complete", () => {
     expect(body.stream).toBeUndefined();
   });
 
+  it("sends temperature only when set, including 0", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-haiku-4-5", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    // 0 is the interesting value — a truthiness check would drop it.
+    await provider.complete({
+      messages: [{ role: "user", content: "Hi" }],
+      model: "claude-haiku-4-5",
+      temperature: 0,
+    });
+    await provider.complete({ messages: [{ role: "user", content: "Hi" }] });
+
+    const [, set] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(set.body as string).temperature).toBe(0);
+    // Omitted entirely when unset: the current Claude line 400s on the key at all,
+    // so sending a default would break the default model.
+    const [, unset] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(unset.body as string)).not.toHaveProperty("temperature");
+  });
+
+  it("rejects a non-finite temperature before reaching the wire", async () => {
+    const fetchMock = mockFetch(() => ({
+      ok: true,
+      json: () => Promise.resolve({ model: "claude-opus-5", content: [] }),
+    }));
+
+    const provider = new AnthropicProvider({ apiKey: "sk-test" });
+    // JSON.stringify would turn NaN into `null`, so the wire value would silently
+    // differ from what the caller asked for.
+    await expect(
+      provider.complete({
+        messages: [{ role: "user", content: "Hi" }],
+        temperature: Number.NaN,
+      }),
+    ).rejects.toThrow(/temperature must be a finite number/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("honors an explicit model and maxTokens", async () => {
     const fetchMock = mockFetch(() => ({
       ok: true,

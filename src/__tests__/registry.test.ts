@@ -345,6 +345,226 @@ describe("ProviderRegistry.combine", () => {
     ).rejects.toThrow(/only supported by the "ensemble" strategy/);
   });
 
+  it("throws up front on a non-finite temperature (not as participant failures)", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: ["anthropic", "openai"],
+        temperature: Number.NaN,
+      }),
+    ).rejects.toThrow(/temperature must be a finite number/);
+  });
+
+  it("forwards temperature to every phase of a combine", async () => {
+    const calls: CompletionRequest[] = [];
+    const echo = (name: string): Provider => ({
+      name,
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        // A distinct text per stage so the pipeline refiner "changes" the answer and
+        // the sanitizing pass runs too — that's the phase most easily forgotten.
+        return Promise.resolve({ text: `${name}:answer`, model: "m" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    });
+    const registry = new ProviderRegistry({
+      custom: {
+        first: { kind: "provider", provider: echo("first") },
+        second: { kind: "provider", provider: echo("second") },
+      },
+    });
+
+    await registry.combine({
+      ...PROMPT,
+      strategy: "pipeline",
+      participants: ["first", "second"],
+      temperature: 0,
+    });
+
+    // Guards the "a field completionFor doesn't copy is silently dropped" trap: it's
+    // request-wide, so every phase sees it — and 0 must survive, not read as unset.
+    expect(calls.length).toBeGreaterThan(2);
+    expect(calls.every((c) => c.temperature === 0)).toBe(true);
+  });
+
+  it("scopes a per-participant temperature, leaving the others untouched", async () => {
+    // The blast-radius case: several current models reject `temperature` outright, so a
+    // request-wide value would 400 every call on such a participant. Naming the
+    // participants individually keeps the parameter off the ones that can't take it.
+    const calls: CompletionRequest[] = [];
+    const echo = (name: string): Provider => ({
+      name,
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        return Promise.resolve({ text: `${name}:answer`, model: "m" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    });
+    const registry = new ProviderRegistry({
+      custom: {
+        hot: { kind: "provider", provider: echo("hot") },
+        picky: { kind: "provider", provider: echo("picky") },
+      },
+    });
+
+    await registry.combine({
+      ...PROMPT,
+      strategy: "broadcast",
+      participants: [
+        { provider: "hot", temperature: 1.2 },
+        { provider: "picky" },
+      ],
+    });
+
+    expect(calls).toHaveLength(2);
+    // Exactly one call carried it; the other has the key absent entirely, not
+    // `undefined` — the provider mappers branch on `!== undefined`.
+    expect(calls.filter((c) => c.temperature === 1.2)).toHaveLength(1);
+    expect(calls.filter((c) => !Object.hasOwn(c, "temperature"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("lets a participant temperature win over the request-wide one, including 0", async () => {
+    const calls: CompletionRequest[] = [];
+    const echo = (name: string): Provider => ({
+      name,
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        return Promise.resolve({ text: `${name}:answer`, model: "m" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    });
+    const registry = new ProviderRegistry({
+      custom: {
+        cold: { kind: "provider", provider: echo("cold") },
+        inherits: { kind: "provider", provider: echo("inherits") },
+      },
+    });
+
+    await registry.combine({
+      ...PROMPT,
+      strategy: "broadcast",
+      participants: [{ provider: "cold", temperature: 0 }, "inherits"],
+      temperature: 0.9,
+    });
+
+    // 0 must win over 0.9 — a `||` fallback would silently promote it to the
+    // request-wide value.
+    expect(calls.filter((c) => c.temperature === 0)).toHaveLength(1);
+    expect(calls.filter((c) => c.temperature === 0.9)).toHaveLength(1);
+  });
+
+  it("throws on a non-finite per-participant temperature, naming the provider", async () => {
+    const registry = new ProviderRegistry({ anthropic: { apiKey: "a" } });
+
+    await expect(
+      registry.combine({
+        ...PROMPT,
+        participants: [{ provider: "anthropic", temperature: Number.NaN }],
+      }),
+    ).rejects.toThrow(
+      /participant for "anthropic" has an invalid temperature \(NaN\)/,
+    );
+  });
+
+  it("rejects cacheControl on `system` for the strategies that compose their own prompt", async () => {
+    const registry = new ProviderRegistry({
+      anthropic: { apiKey: "a" },
+      openai: { apiKey: "o" },
+    });
+    const system = { text: "You are terse.", cacheControl: {} };
+
+    for (const strategy of ["consensus", "pipeline", "panel"] as const) {
+      await expect(
+        registry.combine({
+          ...PROMPT,
+          participants: ["anthropic", "openai"],
+          strategy,
+          system,
+        }),
+      ).rejects.toThrow(
+        new RegExp(
+          `cacheControl on \`system\` is not supported by the "${strategy}" strategy`,
+        ),
+      );
+    }
+  });
+
+  it("accepts a SystemPrompt without cacheControl on the composing strategies", async () => {
+    // Only the marker is refused, never the object form itself: the text still reaches
+    // the phase prompt, flattened into the strategy's own framing.
+    const calls: CompletionRequest[] = [];
+    const echo: Provider = {
+      name: "mine",
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        return Promise.resolve({ text: "answer", model: "m" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+
+    await registry.combine({
+      ...PROMPT,
+      strategy: "pipeline",
+      participants: ["mine"],
+      system: { text: "You are terse." },
+    });
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0]?.system).toContain("You are terse.");
+    // Flattened to a string by composeSystem — never the object form.
+    expect(typeof calls[0]?.system).toBe("string");
+  });
+
+  it("forwards a SystemPrompt with its cacheControl intact on the fan-out strategies", async () => {
+    // ensemble/broadcast pass the caller's prompt through verbatim, so the breakpoint
+    // has to survive `completionFor` and reach the provider unflattened.
+    const calls: CompletionRequest[] = [];
+    const echo: Provider = {
+      name: "mine",
+      complete: (request: CompletionRequest): Promise<CompletionResult> => {
+        calls.push(request);
+        return Promise.resolve({ text: "answer", model: "m" });
+      },
+      stream: () => {
+        throw new Error("stream not used in this test");
+      },
+    };
+    const registry = new ProviderRegistry({
+      custom: { mine: { kind: "provider", provider: echo } },
+    });
+    const system = {
+      text: "You are terse.",
+      cacheControl: { ttl: "1h" as const },
+    };
+
+    await registry.combine({
+      ...PROMPT,
+      strategy: "broadcast",
+      participants: ["mine"],
+      system,
+    });
+
+    expect(calls[0]?.system).toEqual(system);
+  });
+
   it("rejects a non-object-root schema for the ensemble strategy", async () => {
     const registry = new ProviderRegistry({
       anthropic: { apiKey: "a" },

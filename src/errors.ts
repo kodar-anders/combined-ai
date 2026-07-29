@@ -53,6 +53,42 @@ export class ProviderError extends Error {
     this.type = init.type;
     this.body = init.body;
   }
+
+  /**
+   * Serialize to a plain object, so a bare `JSON.stringify(error)` round-trips the
+   * fields a consumer actually needs — logging a {@link ParticipantOutcome}, shipping
+   * it to a worker, persisting it for replay. Without this, `message` is lost (it's
+   * non-enumerable on `Error`), while `structuredClone` keeps the message but
+   * downgrades to a plain `Error`, dropping `status`/`kind`/`code`. `name` is included
+   * so a deserialized object is still identifiable as a `ProviderError`.
+   *
+   * `body` is deliberately omitted — {@link apiError} already embeds it verbatim in
+   * `message`, so carrying it here would just double a payload that is often large.
+   * Read `error.body` off the live object when you want it on its own. `cause` is
+   * omitted too: it can hold any value, including ones that don't serialize.
+   *
+   * Undefined fields are dropped by `JSON.stringify`, so a `transport` error
+   * serializes to `{ name, message, provider, kind }`.
+   */
+  toJSON(): {
+    name: string;
+    message: string;
+    provider: ProviderName;
+    kind: ProviderErrorKind;
+    status?: number;
+    code?: string;
+    type?: string;
+  } {
+    return {
+      name: this.name,
+      message: this.message,
+      provider: this.provider,
+      kind: this.kind,
+      status: this.status,
+      code: this.code,
+      type: this.type,
+    };
+  }
 }
 
 /**

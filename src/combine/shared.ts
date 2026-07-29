@@ -41,6 +41,7 @@ export type RosterEntry = {
   provider: Provider;
   model?: string;
   maxTokens?: number;
+  temperature?: number;
   instruction?: string;
 };
 
@@ -49,7 +50,10 @@ export type RosterEntry = {
  * the request-wide values. A {@link RosterEntry} (or `Survivor`/`Running.entry`)
  * is structurally a valid value, so callers pass the entry directly.
  */
-export type ParticipantOverrides = Pick<RosterEntry, "model" | "maxTokens">;
+export type ParticipantOverrides = Pick<
+  RosterEntry,
+  "model" | "maxTokens" | "temperature"
+>;
 
 /**
  * Wrap an optional progress callback into an `emit` that swallows handler errors
@@ -96,11 +100,23 @@ export function completionFor(
   overrides?: ParticipantOverrides,
 ): CompletionRequest {
   const completion: CompletionRequest = { messages };
-  // Combine builds its own framing and doesn't apply prompt caching, so forward
-  // only the system text — a caller's SystemPrompt cacheControl is dropped here.
-  const text = systemText(system);
-  if (text !== undefined) {
-    completion.system = text;
+  // Forward the system prompt as-is, object form included, so a caller's
+  // `SystemPrompt.cacheControl` breakpoint reaches the provider. A `SystemPrompt`
+  // object can only arrive here from the fan-out strategies (`respondAll` passes the
+  // caller's `request.system` through verbatim); the shaped strategies flatten to a
+  // string via `composeSystem`/`roleSystem` first, so they never take this branch —
+  // and the registry rejects a marker on them up front (`#rejectSystemCacheControl`),
+  // since a flattened prompt has no block boundary to place it on.
+  //
+  // Consequence worth knowing: because the object now reaches Anthropic intact, its
+  // `cache_control` counts toward that provider's 4-breakpoint limit, where the old
+  // flattening hid it. A caller already at 4 content-part markers who also marks
+  // `system` crosses the limit, and `prepareCacheControl` throws *inside*
+  // `complete()` — so under combine it surfaces as failed participant outcomes, not a
+  // thrown error. That is the cost of honoring the marker at all; the alternative is
+  // dropping it silently, which is the bug this replaced.
+  if (system !== undefined) {
+    completion.system = system;
   }
   const model = overrides?.model ?? request.model;
   if (model !== undefined) {
@@ -109,6 +125,14 @@ export function completionFor(
   const maxTokens = overrides?.maxTokens ?? request.maxTokens;
   if (maxTokens !== undefined) {
     completion.maxTokens = maxTokens;
+  }
+  // `??`, not `||`: 0 is a meaningful temperature. A participant's value wins over the
+  // request-wide one, which is what lets a mixed roster set it only where the model
+  // accepts it — several current models reject the parameter outright, and one such
+  // participant is enough to fail a whole consensus run on `minParticipants`.
+  const temperature = overrides?.temperature ?? request.temperature;
+  if (temperature !== undefined) {
+    completion.temperature = temperature;
   }
   // Carry the abort signal into every phase so one signal cancels the whole
   // combine (aborting all in-flight provider calls at once).
@@ -135,7 +159,10 @@ export function completionFor(
 
 /**
  * The text of a caller's system prompt, dropping any {@link SystemPrompt}
- * cacheControl — combine builds its own prompts and doesn't honor cache markers.
+ * cacheControl. Used only by {@link composeSystem}: the shaped strategies concatenate
+ * the caller's text with their own framing, which leaves no block boundary for a cache
+ * breakpoint to mark (the registry rejects one up front rather than relocating it
+ * silently). {@link completionFor} forwards the object form untouched.
  */
 function systemText(
   system: string | SystemPrompt | undefined,
@@ -204,6 +231,42 @@ export async function respondAll(
       return outcome;
     }),
   );
+}
+
+/**
+ * Run an optional embedding-backed comparison and settle it into something a strategy
+ * can spread into its result. Used by all four strategies that compute a semantic
+ * signal, which is what keeps the "informational, never fatal, never silent" policy in
+ * one place.
+ *
+ * Three outcomes, and the distinction between the last two is the point:
+ * - a value → `{ value }`, and the caller attaches its own per-strategy field;
+ * - the helper **declined** (fewer than two answers, or a vector count that didn't match
+ *   the input — see `embedding.ts`) → `{}`, reported as nothing at all, because
+ *   declining is a normal outcome;
+ * - it **threw** → `{ embeddingError }` plus an `embedding` event, so a broken embedder
+ *   is distinguishable from an absent one instead of vanishing into a swallowed catch.
+ *
+ * The failure is never rethrown: the answers are already paid for, and losing them to a
+ * failed side-signal would be the worse outcome.
+ *
+ * Note the emit happens when the underlying promise settles, **not** when the caller
+ * awaits — `consensus`/`panel` start this early to overlap their LLM phases, so the event
+ * can land mid-run (or after they throw without awaiting it at all).
+ */
+export async function runEmbedding<T>(
+  run: () => Promise<T | undefined>,
+  emit: (event: CombineEvent) => void,
+): Promise<{ value?: T; embeddingError?: Error }> {
+  try {
+    const value = await run();
+    return value === undefined ? {} : { value };
+  } catch (error) {
+    const embeddingError =
+      error instanceof Error ? error : new Error(String(error));
+    emit({ type: "embedding", error: embeddingError });
+    return { embeddingError };
+  }
 }
 
 /**

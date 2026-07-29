@@ -17,7 +17,6 @@ import {
   type BroadcastResult,
   type CombineOptions,
   type CombineRequest,
-  type SemanticComparison,
 } from "./index";
 import { compareAnswers, type ResolvedEmbedder } from "./embedding";
 import {
@@ -27,6 +26,7 @@ import {
   outcomeUsage,
   respondAll,
   type RosterEntry,
+  runEmbedding,
 } from "./shared";
 
 /**
@@ -59,33 +59,35 @@ export async function broadcast(
     );
   }
 
-  // Optional semantic comparison: embed the non-empty answers with the
-  // designated model and attach an agreement/outlier signal. Informational —
-  // the raw responses are returned unchanged regardless. A failed embedding
-  // pass must not fail a broadcast that already has answers, so swallow errors.
+  // Optional semantic comparison: embed the non-empty answers with the designated
+  // model and attach an agreement/outlier signal. Informational — the raw responses
+  // are returned unchanged regardless — so a failure is reported (`embeddingError` +
+  // an `embedding` event via runEmbedding) rather than fatal.
   const usageEntries = outcomeUsage(responses);
-  let semantic: SemanticComparison | undefined;
-  if (embedder !== undefined) {
-    const answers = responses.flatMap((o) =>
-      o.status === "ok" && o.result.text.trim() !== ""
-        ? [{ id: o.id, text: o.result.text }]
-        : [],
-    );
-    try {
-      const compared = await compareAnswers(embedder, answers, request.signal);
-      if (compared !== undefined) {
-        semantic = compared.comparison;
-        usageEntries.push(compared.usage);
-      }
-    } catch {
-      // Comparison is best-effort; keep the answers we already have.
-    }
+  const embedded =
+    embedder === undefined
+      ? {}
+      : await runEmbedding(() => {
+          const answers = responses.flatMap((o) =>
+            o.status === "ok" && o.result.text.trim() !== ""
+              ? [{ id: o.id, text: o.result.text }]
+              : [],
+          );
+          return compareAnswers(embedder, answers, request.signal);
+        }, emit);
+  if (embedded.value !== undefined) {
+    usageEntries.push(embedded.value.usage);
   }
 
   return {
     strategy: "broadcast",
     responses,
-    ...(semantic === undefined ? {} : { semantic }),
+    ...(embedded.value === undefined
+      ? {}
+      : { semantic: embedded.value.comparison }),
+    ...(embedded.embeddingError === undefined
+      ? {}
+      : { embeddingError: embedded.embeddingError }),
     usage: aggregateUsage(usageEntries),
   };
 }

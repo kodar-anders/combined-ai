@@ -25,6 +25,7 @@ import {
   outcomeUsage,
   renderConversation,
   type RosterEntry,
+  runEmbedding,
   runOutcome,
   sanitizeAnswer,
   type UsageEntry,
@@ -157,19 +158,24 @@ export async function consensus(
   // Optional, informational: embed the surviving drafts to score their semantic
   // agreement (and flag the outlier). Kicked off here so it overlaps the critique
   // + synthesis phases; awaited only when building the result. It never feeds
-  // synthesis, and a failure resolves to undefined so it can't break the run. It
-  // is intentionally *not* budget-gated: embeddings are far cheaper than the LLM
-  // phases the soft budget governs, and skipping this informational call would
-  // save little while complicating the gate.
+  // synthesis, and `runEmbedding` settles a failure into a reportable value rather
+  // than a rejection, so it can't break the run — while still distinguishing a
+  // *declined* comparison (too few drafts) from a *failed* one. It is intentionally
+  // *not* budget-gated: embeddings are far cheaper than the LLM phases the soft
+  // budget governs, and skipping this informational call would save little while
+  // complicating the gate.
   const draftAgreementPromise =
     embedder === undefined
       ? undefined
-      : compareAnswers(
-          embedder,
-          survivors.map((s) => ({ id: s.id, text: s.result.text })),
-          request.signal,
-          // eslint-disable-next-line unicorn/no-useless-undefined, unicorn/prefer-await -- a rejected comparison resolves to `undefined` (informational, must not break the run); the promise runs concurrently with critique/synth, so awaiting it here would serialize it.
-        ).catch(() => undefined);
+      : runEmbedding(
+          () =>
+            compareAnswers(
+              embedder,
+              survivors.map((s) => ({ id: s.id, text: s.result.text })),
+              request.signal,
+            ),
+          emit,
+        );
 
   // ── Phase 2: critiques (parallel fan-out over survivors) ──
   // Critiques are an optional refinement: if the budget is already spent, skip the
@@ -261,7 +267,7 @@ export async function consensus(
         finalText = sanitized.text;
       }
       // Settle the (concurrent) draft-agreement embedding before returning.
-      const draftAgr = await draftAgreementPromise;
+      const embedded = (await draftAgreementPromise) ?? {};
       return {
         text: finalText,
         strategy: "consensus",
@@ -269,12 +275,17 @@ export async function consensus(
         model: result.model,
         drafts,
         critiques,
-        ...(draftAgr ? { draftAgreement: draftAgr.comparison } : {}),
+        ...(embedded.value === undefined
+          ? {}
+          : { draftAgreement: embedded.value.comparison }),
+        ...(embedded.embeddingError === undefined
+          ? {}
+          : { embeddingError: embedded.embeddingError }),
         usage: aggregateUsage([
           ...outcomeUsage(drafts),
           ...outcomeUsage(critiques),
           ...synthUsage,
-          ...(draftAgr ? [draftAgr.usage] : []),
+          ...(embedded.value === undefined ? [] : [embedded.value.usage]),
         ]),
       };
     } catch (error) {

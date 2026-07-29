@@ -7,6 +7,127 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-29
+
+A deliberate major one day after `1.0.0`, not a versioning slip: the fix below for `cacheControl` on
+`system` has to reject input that `1.0.0` accepted, and holding it back would leave a silent no-op in
+place for another release. Most of this release is about the same failure mode — **things the library
+did silently** — so each entry says what used to be invisible. Read the **Breaking** section in full:
+two of the five items are consequences of those fixes rather than intentional API changes, and one of
+them affects `onEvent` handlers.
+
+### Breaking
+
+- **`cacheControl` on a `SystemPrompt` now throws under `consensus`, `pipeline` and `panel`.** It was
+  previously accepted and silently discarded, so the prompt-cache optimization never applied and
+  nothing said so. Those strategies concatenate your text with their own per-phase framing into a
+  single string, which leaves no block boundary for a breakpoint to mark — it can only be relocated
+  to cover the framing too, which is not what you asked for.
+
+  To migrate: remove `cacheControl` from `system`, move the marker onto a leading message content
+  part, or switch to `ensemble`/`broadcast` — which now **honor** it on `system` (see **Fixed**).
+
+- **`JSON.stringify(providerError)` changes shape** (see `ProviderError.toJSON()` under **Added**): it
+  gains `message` and loses `body`. `body` was a duplicate — `apiError` already embeds it verbatim in
+  `message` — and it can be large. Read `err.body` off the live object if you need it separately.
+
+- **`CombineCost.unpriced` and `EnsembleResult.excluded` are required fields.** Only breaking if you
+  _construct_ those result objects yourself (plausible with `combined-ai/test` fakes); reading them is
+  additive.
+
+- **`CombineEvent` has a new `embedding` member, which breaks `onEvent` handlers that narrow by
+  elimination.** If your handler special-cases `phase` and `budget` and treats _everything else_ as a
+  settlement event — the natural shape in 1.0.0, where it was true — a failed embedding now reaches
+  that branch, where it has no `provider`/`status`. TypeScript consumers get a compile error
+  (`Property 'provider' does not exist on type …`); plain JS logs `undefined`.
+
+  To migrate: add a `case "embedding"` (it carries `error`) before the settlement branch, or switch
+  the fallthrough to an explicit list of the six settlement types. The `onEvent` example in
+  [Combine strategies](./docs/strategies.md#progress-events) shows the updated shape.
+
+- **A `cacheControl` marker on `system` now counts toward Anthropic's 4-breakpoint limit under
+  `ensemble`/`broadcast`.** That follows from the fix below — the marker reaches the provider now
+  instead of being dropped — but it shrinks the budget available to message content parts by one. If
+  you were already at 4 content-part breakpoints _and_ marked `system`, you are now at 5, and
+  `prepareCacheControl` throws inside `complete()`, which combine records as a failed participant
+  outcome rather than a thrown error. Drop one marker.
+
+### Added
+
+- **`temperature` on `CompletionRequest`**, forwarded by all three providers and by every `combine`
+  phase. Omitted from the request entirely when unset, so existing calls are byte-identical.
+
+  **Check your model before using it.** Anthropic _removed_ the parameter on its current line (Opus
+  4.7+, Sonnet 5, Fable 5 — including this library's default `claude-opus-5`): setting it there is a
+  **400**, not a no-op. Gemini accepts it on every current model, as do `openai-compatible` custom
+  providers; OpenAI's reasoning-tier models have historically rejected non-default values. The value
+  is passed through as-is (ranges differ per provider and the provider validates its own), but a
+  non-finite value throws rather than reaching the wire as `null`. `temperature: 0` reduces
+  run-to-run variation and is **not** a seed — these APIs aren't reproducible even at 0.
+
+  **On a mixed `combine` roster, set it per participant** via `ParticipantSpec.temperature`, which
+  wins over the request-wide value. A request-wide value reaches every participant, so one whose model
+  rejects the parameter turns all of its calls into 400s — and under `consensus` those count as failed
+  drafts, which can drop the survivor count below `minParticipants` and fail the whole run. A
+  participant's temperature applies to every call it makes (critique and synthesis included): it is
+  per participant, not per phase. Overrides replace rather than clear, so there is no way to exempt one
+  participant from an inherited value — leave the request-wide one unset instead.
+  `seed`/`topP`/`topK` are still out of scope.
+
+- **`ProviderError.toJSON()`** — plain `JSON.stringify` now round-trips
+  `{ name, message, provider, kind, status?, code?, type? }`, so logging a `ParticipantOutcome`,
+  shipping it to a worker, or persisting it for replay no longer needs a hand-rolled mapping.
+  Previously `message` was dropped (it's non-enumerable on `Error`) while `structuredClone` kept the
+  message but downgraded to a plain `Error`, losing `status`/`kind`/`code`. A failure that isn't a
+  `ProviderError` is still a plain `Error` and still stringifies to `{}`.
+
+- **`CombineCost.unpriced`** — how many ledger entries couldn't be priced and are therefore excluded
+  from `totalCost`. `combineCost` has always skipped those, so a run where half the ledger was dropped
+  reported a small total indistinguishable from a genuinely cheap one. A call is unpriceable when its
+  model is unknown to the registry _or_ its usage reported no prompt tokens.
+
+  Read it as "how much of the ledger I had to skip", **not** as an all-clear: a call that reported no
+  usage at all never enters `usage.calls`, so `combineCost` can neither price nor count it. Gemini's
+  embedding endpoint reports no usage and OpenAI-compatible gateways often omit it on completions, so
+  a run using either has billed calls invisible to both numbers. Don't gate billing on
+  `unpriced === 0`.
+
+- **`EnsembleResult.excluded`** — the participants that took no part in the vote, each with a
+  `reason` of `"failed"` or `"unparsed"`. The second case was entirely silent: a response truncated
+  at the token cap leaves `parsed` undefined, so that participant vanished from the merge with no
+  event and no throw, and an apparently unanimous three-way vote could really have been a one-way
+  one. Invariant: `responses.length - excluded.length === agreement.validResponseCount`. Adds
+  `EnsembleExclusion`.
+
+- **`embeddingError` on `consensus`, `ensemble`, `broadcast` and `panel` results, plus an
+  `embedding` progress event.** A failed embedding call was swallowed, so a caller couldn't tell a
+  broken embedder from one that was never configured. The failure is still never fatal — the answers
+  are already paid for — but it is now reported. A comparison that merely _declines_ (fewer than two
+  answers, or a provider returning a mismatched vector count) stays silent, because declining is a
+  normal outcome. In `consensus`/`panel` the event's position in the stream is nondeterministic
+  (the call overlaps the critique/review phase), and on their all-synthesizers-failed throw it is the
+  only signal available.
+
+### Fixed
+
+- **`ensemble` no longer loses `semanticAgreement` to a single empty string.** Every eligible field's
+  values go into one batched `embed()` call, and OpenAI's embeddings endpoint rejects an empty-string
+  input — so one `""` anywhere, in any field, failed the whole request and silently dropped the score
+  for _every_ field. Blank values are now filtered before the batch is built. Schemas that can't
+  express an optional field push callers toward `""` as "absent", so this was easy to hit; the
+  cross-provider strict-mode rules make it close to unavoidable.
+
+- **`cacheControl` on `system` is now honored by `ensemble` and `broadcast`.** Those strategies
+  forward the caller's prompt verbatim, so the breakpoint means exactly what you intended; it was
+  dropped only because `completionFor` extracted the text and discarded the object. (The other three
+  strategies now throw — see **Breaking**.)
+
+- **Corrected the `CacheControl` documentation**, which claimed `combine` ignores the marker
+  outright. It was already honored on message content parts, and the real rule is per phase: a
+  content-part marker reaches the provider in the phases that forward your messages unchanged (every
+  `ensemble`/`broadcast` call, the consensus drafts, the panel answers, the pipeline's first stage),
+  while later phases re-render the conversation as text and drop it — as they do images and files.
+
 ## [1.0.0] - 2026-07-28
 
 First stable release. The public API — the `Provider` contract, `ProviderRegistry`, the five

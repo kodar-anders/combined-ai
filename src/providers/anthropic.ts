@@ -8,6 +8,7 @@ import { extractModel, isRecord } from "./extract";
 import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import {
+  assertValidTemperature,
   readJsonBody,
   requestControls,
   requestWithRetry,
@@ -181,6 +182,16 @@ export class AnthropicProvider implements Provider {
     };
     if (request.system !== undefined) {
       body.system = toAnthropicSystem(request.system);
+    }
+    // Sent only when asked for. The rest of this body is deliberately minimal because
+    // the current Claude line (Opus 4.7+/Sonnet 5/Fable 5, incl. the DEFAULT_MODEL
+    // here) removed the sampling parameters and 400s on them — so an unconditional
+    // `temperature` would break the default model for every caller. Forwarded as-is
+    // when set: the caller has chosen a model that accepts it (see the doc on
+    // `CompletionRequest.temperature`).
+    if (request.temperature !== undefined) {
+      assertValidTemperature(request.temperature);
+      body.temperature = request.temperature;
     }
     if (request.responseFormat !== undefined) {
       // Anthropic's native structured output: a top-level output_config.format

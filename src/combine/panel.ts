@@ -33,6 +33,7 @@ import {
   outcomeUsage,
   renderConversation,
   type RosterEntry,
+  runEmbedding,
   runOutcome,
   sanitizeAnswer,
   type UsageEntry,
@@ -192,17 +193,22 @@ export async function panel(
   // Optional, informational: embed the surviving answers to score their semantic
   // agreement (and flag the outlier). Kicked off here — after the early returns —
   // so it overlaps the review + synthesis phases; awaited only when building the
-  // result. It never feeds synthesis, and a failure resolves to undefined so it
-  // can't break the run. For a panel, *low* agreement is expected/healthy.
+  // result. It never feeds synthesis, and `runEmbedding` settles a failure into a
+  // reportable value rather than a rejection, so it can't break the run — while
+  // still distinguishing a *declined* comparison (too few answers) from a *failed*
+  // one. For a panel, *low* agreement is expected/healthy.
   const perspectivePromise =
     embedder === undefined
       ? undefined
-      : compareAnswers(
-          embedder,
-          survivors.map((s) => ({ id: s.id, text: s.result.text })),
-          request.signal,
-          // eslint-disable-next-line unicorn/no-useless-undefined, unicorn/prefer-await -- a rejected comparison resolves to `undefined` (informational, must not break the run); the promise runs concurrently with review/synth, so awaiting it here would serialize it.
-        ).catch(() => undefined);
+      : runEmbedding(
+          () =>
+            compareAnswers(
+              embedder,
+              survivors.map((s) => ({ id: s.id, text: s.result.text })),
+              request.signal,
+            ),
+          emit,
+        );
 
   const question = renderConversation(request.messages);
   const answersBody = `## Question\n${question}\n\n## Panel answers\n${renderAnswers(survivors)}`;
@@ -292,7 +298,7 @@ export async function panel(
         finalText = sanitized.text;
       }
       // Settle the (concurrent) perspective-agreement embedding before returning.
-      const perspective = await perspectivePromise;
+      const embedded = (await perspectivePromise) ?? {};
       return {
         text: finalText,
         strategy: "panel",
@@ -300,14 +306,17 @@ export async function panel(
         model: result.model,
         answers,
         reviews,
-        ...(perspective
-          ? { perspectiveAgreement: perspective.comparison }
-          : {}),
+        ...(embedded.value === undefined
+          ? {}
+          : { perspectiveAgreement: embedded.value.comparison }),
+        ...(embedded.embeddingError === undefined
+          ? {}
+          : { embeddingError: embedded.embeddingError }),
         usage: aggregateUsage([
           ...outcomeUsage(answers),
           ...outcomeUsage(reviews),
           ...synthUsage,
-          ...(perspective ? [perspective.usage] : []),
+          ...(embedded.value === undefined ? [] : [embedded.value.usage]),
         ]),
       };
     } catch (error) {

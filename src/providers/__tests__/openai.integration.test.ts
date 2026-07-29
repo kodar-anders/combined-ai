@@ -109,4 +109,23 @@ describeLive("OpenAIProvider (live)", () => {
     },
     TIMEOUT_MS,
   );
+
+  it(
+    "rejects an empty-string input to the embeddings endpoint",
+    async () => {
+      // Pins the provider-side behavior that motivates the blank filter in
+      // `collectStringFields`: because ensemble embeds every field's values in ONE
+      // batch, a single "" would otherwise fail the whole call and cost
+      // `semanticAgreement` for every field. If OpenAI ever starts accepting blanks,
+      // this test tells us here rather than leaving a stale workaround in place.
+      // A rejected request isn't billed, so this costs nothing to run.
+      await expect(
+        provider.embed({
+          input: ["", "a dog barks"],
+          model: "text-embedding-3-small",
+        }),
+      ).rejects.toMatchObject({ kind: "api", status: 400 });
+    },
+    TIMEOUT_MS,
+  );
 });

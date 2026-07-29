@@ -200,6 +200,64 @@ describe("ensemble", () => {
       "failed",
       "ok",
     ]);
+    // Both drop reasons are attributed. The "unparsed" one is the silent case: gemini
+    // returned `status: "ok"` yet contributed nothing.
+    expect(result.excluded).toEqual([
+      { id: "openai", reason: "failed" },
+      { id: "gemini", reason: "unparsed" },
+    ]);
+    expect(result.responses.length - result.excluded.length).toBe(
+      result.agreement.validResponseCount,
+    );
+  });
+
+  it("reports an array-rooted response as unparsed, not as a vote", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+      // Valid JSON, but the field-wise merge has no named fields to work with.
+      entry("openai", fakeProvider("openai", calls, { parsed: [1, 2, 3] })),
+      entry("gemini", fakeProvider("gemini", calls, { parsed: "Paris" })),
+    ];
+
+    const result = await ensemble(roster, request());
+
+    expect(result.excluded).toEqual([
+      { id: "openai", reason: "unparsed" },
+      { id: "gemini", reason: "unparsed" },
+    ]);
+    expect(result.agreement.validResponseCount).toBe(1);
+    expect(result.responses.length - result.excluded.length).toBe(
+      result.agreement.validResponseCount,
+    );
+  });
+
+  it("reports an empty excluded list when every participant voted", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+      entry(
+        "gemini",
+        fakeProvider("gemini", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+    ];
+
+    const result = await ensemble(roster, request());
+
+    expect(result.excluded).toEqual([]);
+    expect(result.responses.length - result.excluded.length).toBe(
+      result.agreement.validResponseCount,
+    );
   });
 
   it("throws when no participant returns a valid structured object", async () => {
@@ -358,6 +416,208 @@ describe("ensemble", () => {
     // field is excluded (string fields only).
     expect(result.semanticAgreement?.city).toBeCloseTo(1);
     expect(result.semanticAgreement?.pop).toBeUndefined();
+  });
+
+  it("still scores the other fields when one field carries an empty string", async () => {
+    // The regression test for the real bug: every eligible field's values go into ONE
+    // batch embed call, and OpenAI's endpoint rejects an empty-string input — so a
+    // single `""` used to fail the request and cost `semanticAgreement` for *every*
+    // field. Schemas that can't express "absent" (cross-provider strict mode) push
+    // callers toward exactly this.
+    const inputs: string[][] = [];
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        embed: (req: EmbeddingRequest): Promise<EmbeddingResult> => {
+          inputs.push(req.input);
+          if (req.input.some((t) => t.trim() === "")) {
+            throw new Error("400 '$.input' is invalid: empty string");
+          }
+          return Promise.resolve({
+            embeddings: req.input.map(() => [1, 0]),
+            model: "embed-model",
+          });
+        },
+      },
+    };
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, {
+          parsed: { city: "Paris", note: "" },
+        }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, { parsed: { city: "Paris", note: "" } }),
+      ),
+    ];
+
+    const result = await ensemble(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      undefined,
+      embedder,
+    );
+
+    // No blank ever reached the provider, so the call succeeded...
+    expect(inputs.flat()).toEqual(["Paris", "Paris"]);
+    // ...and `city` still has a score, which is what used to be lost.
+    expect(result.semanticAgreement?.city).toBeCloseTo(1);
+    // `note` was left with zero values, so it's skipped rather than scored.
+    expect(result.semanticAgreement?.note).toBeUndefined();
+    expect(result.embeddingError).toBeUndefined();
+    // The exact-match vote still counts "" as a real value — only the semantic
+    // companion filters it.
+    expect(result.merged.note).toBe("");
+    expect(result.agreement.byField.note).toBeCloseTo(1);
+  });
+
+  it("skips a field left with a single value after filtering blanks", async () => {
+    const inputs: string[][] = [];
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        embed: (req: EmbeddingRequest): Promise<EmbeddingResult> => {
+          inputs.push(req.input);
+          return Promise.resolve({
+            embeddings: req.input.map(() => [1, 0]),
+            model: "embed-model",
+          });
+        },
+      },
+    };
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, {
+          parsed: { city: "Paris", note: "only one" },
+        }),
+      ),
+      entry(
+        "openai",
+        // Whitespace-only counts as blank too — equally meaningless to embed.
+        fakeProvider("openai", calls, {
+          parsed: { city: "Paris", note: "  " },
+        }),
+      ),
+    ];
+
+    const result = await ensemble(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      undefined,
+      embedder,
+    );
+
+    // `note` fell below the two-value eligibility gate, so it never reached the batch.
+    expect(inputs.flat()).toEqual(["Paris", "Paris"]);
+    expect(result.semanticAgreement?.note).toBeUndefined();
+    expect(result.semanticAgreement?.city).toBeCloseTo(1);
+  });
+
+  it("reports a failed embedding without losing the merge", async () => {
+    const events: CombineEvent[] = [];
+    const boom = new Error("embeddings endpoint exploded");
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        embed: () => Promise.reject(boom),
+      },
+    };
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, { parsed: { city: "Paris", pop: 5 } }),
+      ),
+    ];
+
+    const result = await ensemble(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      { onEvent: (event) => events.push(event) },
+      embedder,
+    );
+
+    // The mechanical vote is untouched — that's what the caller paid for.
+    expect(result.merged).toEqual({ city: "Paris", pop: 5 });
+    expect(result.agreement.overall).toBeCloseTo(1);
+    expect(result.votes.city?.candidates).toHaveLength(1);
+    // But the failure is reported both ways instead of vanishing.
+    expect(result.semanticAgreement).toBeUndefined();
+    expect(result.embeddingError).toBe(boom);
+    expect(events).toContainEqual({ type: "embedding", error: boom });
+  });
+
+  it("treats a mismatched vector count as declined, not failed", async () => {
+    const embedder: ResolvedEmbedder = {
+      name: "emb",
+      provider: {
+        name: "emb",
+        complete: () => {
+          throw new Error("complete not used in this test");
+        },
+        stream: () => {
+          throw new Error("stream not used in this test");
+        },
+        // Contract is one vector per input; returning fewer means the per-field
+        // slices would line up against the wrong vectors.
+        embed: (): Promise<EmbeddingResult> =>
+          Promise.resolve({ embeddings: [[1, 0]], model: "embed-model" }),
+      },
+    };
+    const events: CombineEvent[] = [];
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: { city: "Paris" } }),
+      ),
+      entry(
+        "openai",
+        fakeProvider("openai", calls, { parsed: { city: "Lyon" } }),
+      ),
+    ];
+
+    const result = await ensemble(
+      roster,
+      request({ participants: ["anthropic", "openai"] }),
+      { onEvent: (event) => events.push(event) },
+      embedder,
+    );
+
+    // Declining is a normal outcome: no score, but no error and no event either.
+    expect(result.semanticAgreement).toBeUndefined();
+    expect(result.embeddingError).toBeUndefined();
+    expect(events.filter((e) => e.type === "embedding")).toEqual([]);
   });
 
   it("omits semanticAgreement when no embedder is configured", async () => {

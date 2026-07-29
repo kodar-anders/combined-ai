@@ -8,6 +8,7 @@ import { extractModel, isRecord } from "./extract";
 import { sseJson } from "./sse";
 import { parseStructured } from "./structured";
 import {
+  assertValidTemperature,
   readJsonBody,
   requestControls,
   requestWithRetry,
@@ -200,6 +201,11 @@ export class GoogleProvider implements Provider {
     const generationConfig: Record<string, unknown> = {
       maxOutputTokens: request.maxTokens ?? defaultMaxTokens,
     };
+    // Gemini nests sampling parameters under generationConfig, not at the body root.
+    if (request.temperature !== undefined) {
+      assertValidTemperature(request.temperature);
+      generationConfig.temperature = request.temperature;
+    }
     if (request.responseFormat !== undefined) {
       // Gemini's native structured output lives on generationConfig: a JSON MIME
       // type plus an OpenAPI-3-subset schema (UPPERCASE types — see toGeminiSchema).
