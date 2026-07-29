@@ -434,6 +434,11 @@ export type EnsembleResult = {
    * no throw, so an apparently unanimous three-way vote can really have been a one-way
    * one. `agreement` reflects the shrunken roster honestly (its denominator is
    * `validResponseCount`), but nothing else tells you the roster shrank.
+   *
+   * When *every* participant is excluded there is no result to read this from, so the
+   * strategy throws instead — and the thrown error's message lists the same `id: reason`
+   * pairs, since on that path `noResultError` may have no causes to attach either (an
+   * all-`"unparsed"` run had nothing throw).
    */
   excluded: EnsembleExclusion[];
   /** Each participant's structured response, in participant order (includes failures). */

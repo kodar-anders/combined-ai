@@ -272,6 +272,47 @@ describe("ensemble", () => {
     ).rejects.toThrow(/no participant returned a valid structured object/);
   });
 
+  it("names each participant and reason when nothing voted", async () => {
+    const calls: Call[] = [];
+    const roster = [
+      entry("anthropic", fakeProvider("anthropic", calls, { fail: true })),
+      entry("openai", fakeProvider("openai", calls, { parsed: undefined })),
+    ];
+
+    await expect(
+      ensemble(roster, request({ participants: ["anthropic", "openai"] })),
+    ).rejects.toThrow("(anthropic: failed, openai: unparsed)");
+  });
+
+  it("reports every reason when all responses are ok but unparseable", async () => {
+    // The case the message matters most for: nothing failed, so `noResultError` has no
+    // causes to attach and degrades to a plain Error with no `.errors` — and there is no
+    // result to carry `excluded`. Without the reasons in the message the caller can't
+    // tell three truncated responses from a bad schema root.
+    const calls: Call[] = [];
+    const roster = [
+      entry(
+        "anthropic",
+        fakeProvider("anthropic", calls, { parsed: undefined }),
+      ),
+      entry("openai", fakeProvider("openai", calls, { parsed: [1, 2] })),
+      entry("gemini", fakeProvider("gemini", calls, { parsed: "prose" })),
+    ];
+
+    const error = await ensemble(roster, request()).then(
+      () => {
+        throw new Error("expected ensemble to throw");
+      },
+      (e: unknown) => e as Error,
+    );
+
+    expect(error.message).toContain(
+      "(anthropic: unparsed, openai: unparsed, gemini: unparsed)",
+    );
+    // Not an AggregateError: nothing threw, so there are no causes to carry.
+    expect(error).not.toBeInstanceOf(AggregateError);
+  });
+
   it("emits a response event as each participant settles", async () => {
     const calls: Call[] = [];
     const events: CombineEvent[] = [];

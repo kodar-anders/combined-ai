@@ -94,8 +94,14 @@ export async function ensemble(
   }
 
   if (valid.length === 0) {
+    // The per-participant reasons go in the *message* here because this is the one path
+    // with no result to carry `excluded` — and it's the path that needs them most. When
+    // every response was `ok` but unparseable (typically truncated at the token cap),
+    // `noResultError` also has no failed outcomes to collect, so it degrades to a plain
+    // Error with no `.errors` either: without this the caller couldn't tell "all three
+    // truncated" from "my schema has a non-object root".
     throw noResultError(
-      "Ensemble failed: no participant returned a valid structured object.",
+      `Ensemble failed: no participant returned a valid structured object (${describeExclusions(excluded)}).`,
       responses,
     );
   }
@@ -181,6 +187,18 @@ function collectStringFields(
     }
   }
   return [...byKey].map(([key, values]) => ({ key, values }));
+}
+
+/**
+ * Render `excluded` as `id: reason` pairs for the all-excluded error message, in
+ * participant order. Uses the same `reason` words as {@link EnsembleExclusion} so the
+ * message maps onto that type's documentation (`"unparsed"` covers no valid JSON — most
+ * often a response truncated at the token cap — as well as an array or scalar root).
+ * `excluded` is non-empty whenever this is reached: no valid response means every
+ * participant was excluded.
+ */
+function describeExclusions(excluded: EnsembleExclusion[]): string {
+  return excluded.map((e) => `${e.id}: ${e.reason}`).join(", ");
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

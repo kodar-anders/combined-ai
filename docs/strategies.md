@@ -95,7 +95,10 @@ How the merge works (field-wise over the union of top-level keys):
   array/scalar root). Worth checking: a `"failed"` entry is visible in `responses`
   anyway, but an `"unparsed"` one is otherwise silent, so an apparently unanimous
   three-way vote can really have been a one-way one. The invariant is
-  `responses.length - excluded.length === agreement.validResponseCount`.
+  `responses.length - excluded.length === agreement.validResponseCount`. When **every**
+  participant is excluded there is no result, so ensemble throws — and the error message
+  carries the same `id: reason` pairs, e.g.
+  `no participant returned a valid structured object (anthropic: unparsed, openai: unparsed)`.
 - Optional [semantic agreement](#semantic-comparison-optional) over string fields
   via an `embedding` option.
 

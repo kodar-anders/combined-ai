@@ -7,6 +7,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-07-29
+
+### Fixed
+
+- **`ensemble` now names every excluded participant when nothing voted.** `EnsembleResult.excluded`
+  shipped in 2.0.0 to make a silently-dropped participant visible, but it was unreachable in the worst
+  case: when _no_ participant returns a usable object the strategy throws, so there is no result to
+  read it from. And when every response was `ok` but unparseable — typically all truncated at the token
+  cap, the exact case 2.0.0's release notes advertise — nothing threw, so the error carried no `.errors`
+  either. The caller could not tell "all three truncated" from "my schema has a non-object root".
+
+  The thrown message now lists the same `id: reason` pairs as `excluded`, e.g.
+  `Ensemble failed: no participant returned a valid structured object (anthropic: unparsed, openai: unparsed)`.
+  A run that produces a result is unaffected; only the all-excluded error message changed.
+
 ## [2.0.0] - 2026-07-29
 
 A deliberate major one day after `1.0.0`, not a versioning slip: the fix below for `cacheControl` on
