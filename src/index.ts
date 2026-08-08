@@ -33,6 +33,7 @@ export type {
 } from "./types";
 
 export { cosineSimilarity } from "./embeddings";
+export { synthesizeText, type SynthesizeTextOptions } from "./synthesize";
 
 export { ProviderError, type ProviderErrorKind } from "./errors";
 export { type RetryOptions } from "./transport";

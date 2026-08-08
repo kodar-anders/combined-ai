@@ -347,6 +347,12 @@ export type EnsembleFieldCandidate = {
  * `agreement` were computed **from** — not a side signal — so a reviewer can show
  * "one model said `1245.00`, the other two said `12450.00`" without re-walking
  * `responses` and reimplementing the vote's equality rule.
+ *
+ * To LLM-merge a field's dissenting `candidates` into one value instead of
+ * picking the majority winner, pass their `value`s (each converted via
+ * `String()` — `synthesizeText` requires `string[]`, and a field's `value` is
+ * `unknown`) to `synthesizeText` (`src/synthesize.ts`) — a separate, opt-in
+ * call; `ensemble()` never invokes it itself.
  */
 export type EnsembleFieldVote = {
   /**

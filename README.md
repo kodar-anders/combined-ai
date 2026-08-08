@@ -167,6 +167,22 @@ console.log(result.agreement.byField); // e.g. { city: 1, country: 0.67 }
 console.log(result.votes.country); // who returned which value, and who omitted it
 ```
 
+When participants dissent on a field, `synthesizeText` can merge the dissenting
+`candidates` into one value with a single extra LLM call — an opt-in step, not
+something `ensemble()` does for you:
+
+```ts
+import { synthesizeText } from "combined-ai";
+
+const dissent = result.votes.country.candidates.map((c) => String(c.value));
+const merged = await synthesizeText(
+  registry.select("openai"),
+  "Extract the country from the source text.",
+  dissent,
+);
+console.log(merged.text);
+```
+
 → [Ensemble details](./docs/strategies.md#ensemble)
 
 ### Broadcast
@@ -380,6 +396,8 @@ Exported from the package entry point:
   `listModels`, `PRICING_VERIFIED_ON` (values) and `CostBreakdown`, `CombineCost`,
   `CostOptions`, `ModelInfo`, `ModelPricing` (types).
 - Embeddings: `cosineSimilarity` (value).
+- `synthesizeText` (value) and `SynthesizeTextOptions` (type): standalone single-provider
+  merge of text candidates into one answer.
 
 The concrete provider classes (`AnthropicProvider`, `OpenAIProvider`,
 `GoogleProvider`) are **not** exported; the registry constructs them internally.

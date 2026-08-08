@@ -30,6 +30,7 @@ import {
   sanitizeAnswer,
   type UsageEntry,
 } from "./shared";
+import { letterLabel } from "../label";
 import { type CompletionResult } from "../types";
 
 /**
@@ -72,8 +73,6 @@ const SYNTH_FRAMING =
   "drafting or critique process, or the existence of multiple answers, and do " +
   'not use words like "candidates", "the drafts", or "the options" or labels ' +
   'like "Answer A"/"Answer B".';
-
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /** A participant whose draft succeeded, kept with its roster entry for later phases. */
 type Survivor = RosterEntry & {
@@ -311,7 +310,7 @@ function renderAnswers(survivors: Survivor[], anonymized: boolean): string {
   return survivors
     .map((s, i) => {
       const label = anonymized
-        ? `Answer ${LETTERS[i] ?? `#${String(i + 1)}`}`
+        ? `Answer ${letterLabel(i)}`
         : `Answer from ${s.id}`;
       return `### ${label}\n${s.result.text}`;
     })
@@ -333,7 +332,7 @@ function renderCritiques(
       continue;
     }
     const label = anonymized
-      ? `Critique ${LETTERS[i] ?? `#${String(i + 1)}`}`
+      ? `Critique ${letterLabel(i)}`
       : `Critique from ${critique.id}`;
     blocks.push(`### ${label}\n${critique.result.text}`);
   }

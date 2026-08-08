@@ -7,6 +7,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-08
+
+### Added
+
+- **`synthesizeText`**: a standalone, single-provider helper that merges independent text
+  candidates (e.g. `ensemble()`'s `votes[field].candidates`) into one coherent answer via a
+  single LLM call. It's not a combine strategy — no roster, no critique round — just
+  `synthesizeText(provider, prompt, candidates, options?)` returning a plain `CompletionResult`.
+
 ## [2.0.1] - 2026-07-29
 
 ### Fixed
