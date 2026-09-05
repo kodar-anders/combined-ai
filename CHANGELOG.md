@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-09-05
+
 ### Added
 
 - Pricing for `claude-fable-5-1`, `gpt-6-astra`, `gemini-3.8-flash` and `gemini-3.7-flash`.
