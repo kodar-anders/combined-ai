@@ -108,14 +108,35 @@ describe("findModel", () => {
       cachedInputPerMTok: 0.5,
       cacheWriteInputPerMTok: 6.25,
     });
-    // Sonnet 5 (balanced tier of the Claude 5 family) + Opus 4.6.
+    // Sonnet 5 (balanced tier of the Claude 5 family; the $2/$10 launch price became
+    // the standard price) + Opus 4.6.
     expect(findModel("claude-sonnet-5")?.pricing).toEqual({
-      inputPerMTok: 3,
-      outputPerMTok: 15,
-      cachedInputPerMTok: 0.3,
-      cacheWriteInputPerMTok: 3.75,
+      inputPerMTok: 2,
+      outputPerMTok: 10,
+      cachedInputPerMTok: 0.2,
+      cacheWriteInputPerMTok: 2.5,
     });
     expect(findModel("claude-opus-4-6")?.pricing.inputPerMTok).toBe(5);
+    // Fable 5.1 is the one Anthropic row with a 0.025× cache-read rate; its id is a
+    // sibling of claude-fable-5 (digit suffix), so both must resolve to themselves.
+    expect(findModel("claude-fable-5-1")?.pricing.cachedInputPerMTok).toBe(
+      0.25,
+    );
+    expect(findModel("claude-fable-5-1")?.id).toBe("claude-fable-5-1");
+    expect(findModel("claude-fable-5")?.pricing.cachedInputPerMTok).toBe(1);
+
+    // gpt-6-astra sits above the 5.6 line; the 5.6 tiers carry the 2026-08 price cut.
+    expect(findModel("gpt-6-astra")?.pricing).toEqual({
+      inputPerMTok: 10,
+      outputPerMTok: 50,
+      cachedInputPerMTok: 1,
+    });
+    expect(findModel("gpt-5.6-terra")?.pricing).toEqual({
+      inputPerMTok: 2,
+      outputPerMTok: 12,
+      cachedInputPerMTok: 0.2,
+    });
+    expect(findModel("gpt-5.6-luna")?.pricing.inputPerMTok).toBe(0.2);
 
     // gpt-5.x carry a published cache-read rate; mini/nano stay distinct from the
     // base id (the same anchored-prefix collision the gpt-4.1 family guards against),
@@ -143,7 +164,9 @@ describe("findModel", () => {
     });
     expect(findModel("o3-2025-04-16")?.id).toBe("o3");
 
-    // Gemini 3.x GA flash tiers.
+    // Gemini 3.x GA flash tiers (3.8 is the default; 3.6/3.7/3.8 share a price).
+    expect(findModel("gemini-3.8-flash")?.pricing.outputPerMTok).toBe(7.5);
+    expect(findModel("gemini-3.7-flash")?.pricing.outputPerMTok).toBe(7.5);
     expect(findModel("gemini-3.6-flash")?.pricing.outputPerMTok).toBe(7.5);
     expect(findModel("gemini-3.5-flash")?.pricing.outputPerMTok).toBe(9);
     expect(findModel("gemini-3.1-flash-lite")?.pricing.inputPerMTok).toBe(0.25);

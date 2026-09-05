@@ -307,7 +307,7 @@ new ProviderRegistry({
   },
   google: {
     apiKey: "...",
-    model: "gemini-3.6-flash", // optional; default
+    model: "gemini-3.8-flash", // optional; default
   },
 });
 ```

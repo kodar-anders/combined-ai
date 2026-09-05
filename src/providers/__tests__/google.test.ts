@@ -45,7 +45,7 @@ describe("GoogleProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          modelVersion: "gemini-3.6-flash",
+          modelVersion: "gemini-3.8-flash",
           candidates: [
             {
               content: { role: "model", parts: [{ text: "Hello, world." }] },
@@ -62,12 +62,12 @@ describe("GoogleProvider.complete", () => {
 
     expect(result).toEqual({
       text: "Hello, world.",
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
     );
     expect(init.method).toBe("POST");
     expect(init.headers).toMatchObject({
@@ -138,7 +138,7 @@ describe("GoogleProvider.complete", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          modelVersion: "gemini-3.6-flash",
+          modelVersion: "gemini-3.8-flash",
           candidates: [{ content: { parts: [{ text: "ok" }] } }],
         }),
     }));
@@ -708,7 +708,7 @@ describe("GoogleProvider.stream", () => {
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
     );
     const body = JSON.parse(init.body as string);
     expect(body.generationConfig.maxOutputTokens).toBe(64000);

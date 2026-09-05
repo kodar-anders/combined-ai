@@ -43,7 +43,7 @@ Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 > **Gemini note:** Gemini 2.5 and 3.x models are _thinking_ models, and their
 > internal thinking tokens count against `maxTokens`. A very small cap can be
 > spent on thinking alone, leaving the visible answer empty or truncated, so give
-> Gemini ample headroom (the default `gemini-3.6-flash` can't switch thinking
+> Gemini ample headroom (the default `gemini-3.8-flash` can't switch thinking
 > off).
 
 ## Result fields

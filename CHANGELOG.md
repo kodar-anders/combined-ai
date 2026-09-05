@@ -7,6 +7,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- Pricing for `claude-fable-5-1`, `gpt-6-astra`, `gemini-3.8-flash` and `gemini-3.7-flash`.
+
+### Changed
+
+- **Google default model is now `gemini-3.8-flash`** (GA 2026-09-02, same price as the previous
+  `gemini-3.6-flash` default).
+- Pricing corrected against the official pages (verified 2026-09-05): `claude-sonnet-5` is now
+  $2/$10 (the launch price became permanent), and the `gpt-5.6-sol`/`-terra`/`-luna` rows carry
+  OpenAI's August 2026 price cut ($4/$20, $2/$12, $0.20/$1.20).
+
 ## [2.1.0] - 2026-08-08
 
 ### Added

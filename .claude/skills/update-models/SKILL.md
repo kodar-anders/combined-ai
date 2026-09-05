@@ -47,7 +47,8 @@ removals) with the user before editing.
 Prefer `WebFetch` on the official pages (exact ids + prices); use `WebSearch`
 to discover what's new and to find deprecation dates.
 
-- Anthropic pricing: https://platform.claude.com/docs/en/pricing
+- Anthropic pricing: https://platform.claude.com/docs/en/about-claude/pricing
+- Anthropic deprecations: https://platform.claude.com/docs/en/about-claude/model-deprecations
 - OpenAI pricing: https://developers.openai.com/api/docs/pricing
 - Google (Gemini) pricing: https://ai.google.dev/gemini-api/docs/pricing
 - Google (Gemini) deprecations: https://ai.google.dev/gemini-api/docs/deprecations
