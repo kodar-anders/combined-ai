@@ -318,8 +318,9 @@ Beyond the three built-ins you can register extra providers under names you
 choose, via a `custom` map:
 
 - **`openai-compatible`**: point the OpenAI provider at any Chat Completions
-  endpoint (OpenRouter, Together, Groq, Ollama, a local server, …). `baseUrl`
-  (excluding the request path) and `model` are required; `headers`/`retry` optional.
+  endpoint (Meta Model API, OpenRouter, Together, Groq, Ollama, a local server, …).
+  `baseUrl` (excluding the request path) and `model` are required; `headers`/`retry`
+  optional.
 - **`provider`**: bring your own object implementing the `Provider` interface.
 
 ```ts
@@ -331,6 +332,12 @@ const registry = new ProviderRegistry({
       apiKey: process.env.GROQ_API_KEY!,
       baseUrl: "https://api.groq.com/openai",
       model: "llama-3.3-70b-versatile",
+    },
+    meta: {
+      kind: "openai-compatible",
+      apiKey: process.env.META_API_KEY!,
+      baseUrl: "https://api.meta.ai", // note: without the `/v1` Meta's docs show
+      model: "muse-spark-1.3",
     },
     mine: { kind: "provider", provider: myProviderInstance },
   },
@@ -416,8 +423,9 @@ Planned, in rough priority order (subject to change):
 - **Standard Schema support**: pass Zod/Valibot/etc. for structured output, no
   added dependency.
 - **Minority-veto consensus** policy.
-- **More providers**: Amazon Bedrock; possibly Azure OpenAI. (OpenAI-compatible
-  APIs are supported today via custom providers.)
+- **More providers**: Amazon Bedrock; possibly Azure OpenAI, and Meta Model API
+  once Muse Spark leaves public preview. (OpenAI-compatible APIs are supported
+  today via custom providers.)
 - **Model capability metadata**: per-model `contextWindow`, `maxOutputTokens`,
   `supportsVision`, `supportsTools`.
 
