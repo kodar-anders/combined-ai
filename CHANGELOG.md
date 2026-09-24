@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-09-24
+
 ### Added
 
 - Pricing for `claude-opus-5-5`, `gpt-6-sol` and `gpt-6-luna`.
