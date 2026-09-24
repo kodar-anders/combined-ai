@@ -40,7 +40,7 @@ export type AnthropicProviderOptions = {
   retry?: RetryOptions;
 };
 
-const DEFAULT_MODEL = "claude-opus-5";
+const DEFAULT_MODEL = "claude-opus-5-5";
 const DEFAULT_BASE_URL = "https://api.anthropic.com";
 const ANTHROPIC_VERSION = "2023-06-01";
 

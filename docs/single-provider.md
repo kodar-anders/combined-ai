@@ -33,7 +33,7 @@ Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 > given (ranges differ: Anthropic 0–1, OpenAI and Gemini 0–2) and the key is omitted
 > entirely when you don't set it, so existing calls are unaffected. But Anthropic
 > **removed** the parameter on its current line (Opus 4.7+, Sonnet 5, Fable 5 — which
-> includes the default `claude-opus-5`): setting it there is a **400**, not a no-op. Use
+> includes the default `claude-opus-5-5`): setting it there is a **400**, not a no-op. Use
 > an older model such as `claude-haiku-4-5`, or leave it unset. Gemini accepts it on
 > every current model, as do `openai-compatible` custom providers; OpenAI's
 > reasoning-tier models have historically rejected non-default values. `temperature: 0`
@@ -162,6 +162,10 @@ if (first.toolCalls) {
   matches by id, Gemini by name (each throws if its key is missing).
 - **`complete()`-only**, and **not** part of `combine()` (a multi-model tool loop
   has no coherent shared state). Use `select()` for it.
+- **Check the model first.** Anthropic's default `claude-opus-5-5` (and
+  `claude-fable-5-1`) reject a forced `toolChoice` (`"any"` or `{ name }`) with a 400. OpenAI's default `gpt-6-sol` (and `gpt-6-luna`) support function calling
+  on Chat Completions "only with `reasoning_effort` set to `none`", which this
+  library doesn't send — pass another `model` (e.g. `gpt-5.6-terra`) for tools.
 
 ## Multimodal input
 
@@ -210,7 +214,7 @@ cosineSimilarity(embedding, embeddings[0]); // higher → closer in meaning
 ```
 
 OpenAI (default `text-embedding-3-small`) and Google (default
-`gemini-embedding-001`) support embeddings. **Anthropic does not**: it has no
+`gemini-embedding-2`) support embeddings. **Anthropic does not**: it has no
 first-party embeddings endpoint, so `embed("anthropic", …)` throws. Embeddings are
 an optional capability on the `Provider` contract, so a bring-your-own provider
 may also implement `embed`.

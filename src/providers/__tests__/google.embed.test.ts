@@ -35,12 +35,12 @@ describe("GoogleProvider.embed", () => {
         [0.1, 0.2],
         [0.3, 0.4],
       ],
-      model: "gemini-embedding-001",
+      model: "gemini-embedding-2",
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents",
     );
     expect(init.method).toBe("POST");
     expect(init.headers).toMatchObject({ "x-goog-api-key": "key-test" });
@@ -48,11 +48,11 @@ describe("GoogleProvider.embed", () => {
     expect(body).toEqual({
       requests: [
         {
-          model: "models/gemini-embedding-001",
+          model: "models/gemini-embedding-2",
           content: { parts: [{ text: "hello" }] },
         },
         {
-          model: "models/gemini-embedding-001",
+          model: "models/gemini-embedding-2",
           content: { parts: [{ text: "world" }] },
         },
       ],

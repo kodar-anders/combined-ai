@@ -235,11 +235,11 @@ export type CompletionRequest = {
    * because it would otherwise reach the wire as `null`.
    *
    * **Anthropic's current models reject it outright.** The parameter was removed on the
-   * Opus 4.7+/Sonnet 5/Fable 5 line — including this library's default `claude-opus-5` —
+   * Opus 4.7+/Sonnet 5/Fable 5 line — including this library's default `claude-opus-5-5` —
    * so setting it there is a 400, not a no-op. Use an older model (e.g.
    * `claude-haiku-4-5`) or omit it. Gemini accepts it on every current model. OpenAI's
    * reasoning-tier models have historically rejected non-default values; unverified for
-   * the `gpt-5.6` family, so treat it as untested there. It works on
+   * the `gpt-5.6`/`gpt-6` families, so treat it as untested there. It works on
    * `openai-compatible` custom providers (OpenRouter, Groq, Together, Ollama, …).
    *
    * In `combine` this is request-wide: it reaches **every** participant and **every**

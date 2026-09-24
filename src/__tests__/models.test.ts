@@ -101,7 +101,20 @@ describe("findModel", () => {
   });
 
   it("prices and disambiguates the current-generation additions", () => {
-    // Anthropic: Opus 5 (the current default) prices like the 4.x Opus line.
+    // Anthropic: Opus 5.5 (the current default) has its own row — without it the
+    // digit-snapshot rule would price `claude-opus-5-5` as `claude-opus-5`. Its
+    // cache read is 0.05× input.
+    expect(findModel("claude-opus-5-5")).toEqual({
+      id: "claude-opus-5-5",
+      pricing: {
+        inputPerMTok: 4,
+        outputPerMTok: 20,
+        cachedInputPerMTok: 0.2,
+        cacheWriteInputPerMTok: 5,
+      },
+    });
+    expect(findModel("claude-opus-5-5-20260922")?.id).toBe("claude-opus-5-5");
+    // Opus 5 prices like the 4.x Opus line.
     expect(findModel("claude-opus-5")?.pricing).toEqual({
       inputPerMTok: 5,
       outputPerMTok: 25,
@@ -125,16 +138,41 @@ describe("findModel", () => {
     expect(findModel("claude-fable-5-1")?.id).toBe("claude-fable-5-1");
     expect(findModel("claude-fable-5")?.pricing.cachedInputPerMTok).toBe(1);
 
-    // gpt-6-astra sits above the 5.6 line; the 5.6 tiers carry the 2026-08 price cut.
+    // gpt-6 (Astra/Sol/Luna); prompts above 272K bill 2× input + cache, 1.5× output.
     expect(findModel("gpt-6-astra")?.pricing).toEqual({
       inputPerMTok: 10,
       outputPerMTok: 50,
       cachedInputPerMTok: 1,
+      highTier: {
+        aboveInputTokens: 272_000,
+        inputPerMTok: 20,
+        outputPerMTok: 75,
+        cachedInputPerMTok: 2,
+      },
     });
+    expect(findModel("gpt-6-sol")?.pricing).toEqual({
+      inputPerMTok: 2,
+      outputPerMTok: 10,
+      cachedInputPerMTok: 0.2,
+      highTier: {
+        aboveInputTokens: 272_000,
+        inputPerMTok: 4,
+        outputPerMTok: 15,
+        cachedInputPerMTok: 0.4,
+      },
+    });
+    expect(findModel("gpt-6-luna")?.pricing.inputPerMTok).toBe(0.1);
+    // The 5.6 tiers carry the 2026-08 price cut; their pages state no long-context
+    // cache rate, so the tier omits it.
     expect(findModel("gpt-5.6-terra")?.pricing).toEqual({
       inputPerMTok: 2,
       outputPerMTok: 12,
       cachedInputPerMTok: 0.2,
+      highTier: {
+        aboveInputTokens: 272_000,
+        inputPerMTok: 4,
+        outputPerMTok: 18,
+      },
     });
     expect(findModel("gpt-5.6-luna")?.pricing.inputPerMTok).toBe(0.2);
 
@@ -145,6 +183,11 @@ describe("findModel", () => {
       inputPerMTok: 5,
       outputPerMTok: 30,
       cachedInputPerMTok: 0.5,
+      highTier: {
+        aboveInputTokens: 272_000,
+        inputPerMTok: 10,
+        outputPerMTok: 45,
+      },
     });
     expect(findModel("gpt-5.4-mini")?.id).toBe("gpt-5.4-mini");
     expect(findModel("gpt-5.4-nano")?.id).toBe("gpt-5.4-nano");

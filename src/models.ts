@@ -14,13 +14,13 @@
  * without waiting for a release. See {@link PRICING_VERIFIED_ON} for when these
  * numbers were last checked.
  *
- * Prices verified 2026-09-05 against:
+ * Prices verified 2026-09-24 against:
  * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
  * - OpenAI:    https://developers.openai.com/api/docs/pricing
  * - Google:    https://ai.google.dev/gemini-api/docs/pricing
  *
- * Prompt-cache rates: Anthropic's (read 0.1× input — 0.025× on Fable 5.1; write
- * 1.25× input = the 5-minute TTL rate, so 1-hour writes under-bill) and Gemini's
+ * Prompt-cache rates: Anthropic's (read 0.1× input — 0.05× on Opus 5.5, 0.025× on
+ * Fable 5.1; write 1.25× input = the 5-minute TTL rate, so 1-hour writes under-bill) and Gemini's
  * (read 0.1× input, tiered for the Pro models) are carried. OpenAI's are carried
  * per-row as published — the discount is not a fixed multiple there (0.1× on the
  * gpt-5.x/6.x rows, 0.25×–0.5× on the older gpt-4.x/o-series ones) — and left unset
@@ -92,7 +92,7 @@ export type CostOptions = {
  * The date the {@link MODELS} prices were last verified, as an ISO `YYYY-MM-DD`
  * string. Exposed so callers can reason about staleness programmatically.
  */
-export const PRICING_VERIFIED_ON = "2026-09-05";
+export const PRICING_VERIFIED_ON = "2026-09-24";
 
 /**
  * The built-in pricing table — the most commonly used models across the three
@@ -102,12 +102,14 @@ export const PRICING_VERIFIED_ON = "2026-09-05";
  * {@link listModels}.
  *
  * Gemini 2.5 Pro is tiered ($1.25/$10.00 ≤200k prompt tokens, $2.50/$15.00 above),
- * carried via {@link ModelPricing.highTier} so the cost helpers pick the right tier
- * from the request's prompt size.
+ * and so are the recent OpenAI models (2× input, 1.5× output above 272K prompt
+ * tokens) — carried via {@link ModelPricing.highTier} so the cost helpers pick the
+ * right tier from the request's prompt size.
  */
 const MODELS: Record<string, ModelPricing> = {
   // Anthropic. Cache read = 0.1× input, cache write = 1.25× input (5-minute TTL).
-  // Fable 5.1 is the exception: cache read is 0.025× input ($0.25).
+  // Exceptions: cache read is 0.05× input on Opus 5.5 ($0.20) and 0.025× on Fable
+  // 5.1 ($0.25).
   "claude-fable-5-1": {
     inputPerMTok: 10,
     outputPerMTok: 50,
@@ -120,6 +122,15 @@ const MODELS: Record<string, ModelPricing> = {
     cachedInputPerMTok: 1,
     cacheWriteInputPerMTok: 12.5,
   },
+  // Opus 5.5 (2026-09-22) is the default. Its exact key is load-bearing: without
+  // it, `claude-opus-5-5` resolves to `claude-opus-5` via the digit-snapshot rule.
+  "claude-opus-5-5": {
+    inputPerMTok: 4,
+    outputPerMTok: 20,
+    cachedInputPerMTok: 0.2,
+    cacheWriteInputPerMTok: 5,
+  },
+  // Opus 5 is "legacy" since Opus 5.5 (not retired before 2027-07-24).
   "claude-opus-5": {
     inputPerMTok: 5,
     outputPerMTok: 25,
@@ -169,31 +180,100 @@ const MODELS: Record<string, ModelPricing> = {
   // 5.x rows, 0.25×–0.5× on the gpt-4.x/o-series ones); no separate cache-write
   // charge (caching is automatic). The `-pro` rows omit cachedInputPerMTok — the
   // page lists no cached rate for them (see header note).
+  // Long context: prompts above 272K input tokens bill 2× input and 1.5× output
+  // (`highTier`). The gpt-6 pages also double the cache rate; the 5.6/5.5/5.4 pages
+  // state only input/output, so their tier omits a cached rate (the base one stays)
+  // — except gpt-5.6-sol, whose long-context row on the pricing page lists $0.80.
   // gpt-6-astra (2026-09-03) is the flagship above the 5.6 line.
-  "gpt-6-astra": { inputPerMTok: 10, outputPerMTok: 50, cachedInputPerMTok: 1 },
+  "gpt-6-astra": {
+    inputPerMTok: 10,
+    outputPerMTok: 50,
+    cachedInputPerMTok: 1,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 20,
+      outputPerMTok: 75,
+      cachedInputPerMTok: 2,
+    },
+  },
+  // gpt-6-sol/-luna (GA 2026-09-22). gpt-6-sol is the default (OpenAI's "balance
+  // intelligence and cost" tier). Their pages say Chat Completions "supports
+  // function calling only with `reasoning_effort` set to `none`".
+  "gpt-6-sol": {
+    inputPerMTok: 2,
+    outputPerMTok: 10,
+    cachedInputPerMTok: 0.2,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 4,
+      outputPerMTok: 15,
+      cachedInputPerMTok: 0.4,
+    },
+  },
+  "gpt-6-luna": {
+    inputPerMTok: 0.1,
+    outputPerMTok: 0.5,
+    cachedInputPerMTok: 0.01,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 0.2,
+      outputPerMTok: 0.75,
+      cachedInputPerMTok: 0.02,
+    },
+  },
   // The 5.6 family (GA 2026-07-09) is tiered Sol/Terra/Luna — no mini/nano this
-  // generation; gpt-5.6-terra is the default (OpenAI's "balances intelligence and
-  // cost" tier). Prices are the post-2026-08-22 cut. Sol's is promotional ("at least
+  // generation. Prices are the post-2026-08-22 cut. Sol's is promotional ("at least
   // through 2026-11-21") with no post-promo rate published — carried as published.
   "gpt-5.6-sol": {
     inputPerMTok: 4,
     outputPerMTok: 20,
     cachedInputPerMTok: 0.4,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 8,
+      outputPerMTok: 30,
+      cachedInputPerMTok: 0.8,
+    },
   },
   "gpt-5.6-terra": {
     inputPerMTok: 2,
     outputPerMTok: 12,
     cachedInputPerMTok: 0.2,
+    highTier: { aboveInputTokens: 272_000, inputPerMTok: 4, outputPerMTok: 18 },
   },
   "gpt-5.6-luna": {
     inputPerMTok: 0.2,
     outputPerMTok: 1.2,
     cachedInputPerMTok: 0.02,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 0.4,
+      outputPerMTok: 1.8,
+    },
   },
-  "gpt-5.5": { inputPerMTok: 5, outputPerMTok: 30, cachedInputPerMTok: 0.5 },
+  "gpt-5.5": {
+    inputPerMTok: 5,
+    outputPerMTok: 30,
+    cachedInputPerMTok: 0.5,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 10,
+      outputPerMTok: 45,
+    },
+  },
   // gpt-5.5-pro has no published cache-read rate → omit it (falls back to full input).
+  // Its page states no long-context rate either, so no `highTier`.
   "gpt-5.5-pro": { inputPerMTok: 30, outputPerMTok: 180 },
-  "gpt-5.4": { inputPerMTok: 2.5, outputPerMTok: 15, cachedInputPerMTok: 0.25 },
+  "gpt-5.4": {
+    inputPerMTok: 2.5,
+    outputPerMTok: 15,
+    cachedInputPerMTok: 0.25,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 5,
+      outputPerMTok: 22.5,
+    },
+  },
   "gpt-5.4-mini": {
     inputPerMTok: 0.75,
     outputPerMTok: 4.5,
@@ -262,14 +342,16 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 2.5,
     cachedInputPerMTok: 0.03,
   },
+  // gemini-3.1-flash-lite shuts down 2027-05-07 (→ gemini-3.5-flash-lite).
   "gemini-3.1-flash-lite": {
     inputPerMTok: 0.25,
     outputPerMTok: 1.5,
     cachedInputPerMTok: 0.025,
   },
   // The 2.5 generation is superseded by 3.x (default is now gemini-3.8-flash). Still
-  // listed as stable with no shutdown date announced (as of 2026-09-05); kept for
-  // cost calc of usage logs.
+  // listed as stable with no shutdown date announced (as of 2026-09-24), but since
+  // 2026-09-18 access is limited to users who used them before; kept for cost calc
+  // of usage logs.
   "gemini-2.5-pro": {
     inputPerMTok: 1.25,
     outputPerMTok: 10,
@@ -296,9 +378,12 @@ const MODELS: Record<string, ModelPricing> = {
   // suffix like `-small`/`-large` from a `text-embedding-3` base.
   "text-embedding-3-small": { inputPerMTok: 0.02, outputPerMTok: 0 },
   "text-embedding-3-large": { inputPerMTok: 0.13, outputPerMTok: 0 },
+  // gemini-embedding-001 shuts down 2028-05-14 (→ gemini-embedding-2). It is no
+  // longer on the pricing page; $0.15 is the rate it last listed (2026-09-05).
   "gemini-embedding-001": { inputPerMTok: 0.15, outputPerMTok: 0 },
-  // gemini-embedding-2 is multimodal and priced per modality; this is the text rate
-  // (image/audio/video embeddings bill higher and aren't modelled).
+  // gemini-embedding-2 (the Google embed default) is multimodal and priced per
+  // modality; this is the text rate (image/audio/video embeddings bill higher and
+  // aren't modelled).
   "gemini-embedding-2": { inputPerMTok: 0.2, outputPerMTok: 0 },
 };
 

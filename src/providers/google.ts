@@ -40,7 +40,7 @@ export type GoogleProviderOptions = {
 };
 
 const DEFAULT_MODEL = "gemini-3.8-flash";
-const DEFAULT_EMBED_MODEL = "gemini-embedding-001";
+const DEFAULT_EMBED_MODEL = "gemini-embedding-2";
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
 /** Non-streaming default keeps responses under the HTTP timeout window. */

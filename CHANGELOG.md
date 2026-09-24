@@ -7,6 +7,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- Pricing for `claude-opus-5-5`, `gpt-6-sol` and `gpt-6-luna`.
+- OpenAI long-context pricing: prompts above 272K input tokens now bill at the higher tier
+  (2× input, 1.5× output) on the `gpt-6-*`, `gpt-5.6-*`, `gpt-5.5` and `gpt-5.4` rows.
+
+### Changed
+
+- **Anthropic default model is now `claude-opus-5-5`** (was `claude-opus-5`). It rejects a forced
+  `toolChoice` (`"any"` or `{ name }`) with a 400.
+- **OpenAI default model is now `gpt-6-sol`** (was `gpt-5.6-terra`). On Chat Completions it supports
+  function calling only with `reasoning_effort: "none"`, which this library doesn't send — pass
+  another `model` for tool calling.
+- **Google default embedding model is now `gemini-embedding-2`** (was `gemini-embedding-001`).
+  Vectors from the two models aren't comparable, so re-embed stored vectors or pin
+  `model: "gemini-embedding-001"`.
+
+### Fixed
+
+- `claude-opus-5-5` was priced as `claude-opus-5` ($5/$25 instead of $4/$20).
+
 ## [2.1.1] - 2026-09-05
 
 ### Added

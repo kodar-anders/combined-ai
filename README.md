@@ -296,13 +296,13 @@ Pass an entry for each provider you want; omit one to leave it out.
 new ProviderRegistry({
   anthropic: {
     apiKey: "sk-ant-...", // required
-    model: "claude-opus-5", // optional; default
+    model: "claude-opus-5-5", // optional; default
     baseUrl: "https://api.anthropic.com", // optional; default
     retry: { maxRetries: 2, baseDelayMs: 500 }, // optional; defaults
   },
   openai: {
     apiKey: "sk-...",
-    model: "gpt-5.6-terra", // optional; default
+    model: "gpt-6-sol", // optional; default
     headers: { "x-trace": "..." }, // optional; merged into every request
   },
   google: {
