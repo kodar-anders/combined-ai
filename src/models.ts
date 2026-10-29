@@ -14,15 +14,15 @@
  * without waiting for a release. See {@link PRICING_VERIFIED_ON} for when these
  * numbers were last checked.
  *
- * Prices verified 2026-09-24 against:
+ * Prices verified 2026-10-29 against:
  * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
  * - OpenAI:    https://developers.openai.com/api/docs/pricing
  * - Google:    https://ai.google.dev/gemini-api/docs/pricing
  *
- * Prompt-cache rates: Anthropic's (read 0.1× input — 0.05× on Opus 5.5, 0.025× on
- * Fable 5.1; write 1.25× input = the 5-minute TTL rate, so 1-hour writes under-bill) and Gemini's
+ * Prompt-cache rates: Anthropic's (read 0.1× input — 0.05× on Opus 5.5/Sonnet 5.5,
+ * 0.025× on Fable 5.1; write 1.25× input = the 5-minute TTL rate, so 1-hour writes under-bill) and Gemini's
  * (read 0.1× input, tiered for the Pro models) are carried. OpenAI's are carried
- * per-row as published — the discount is not a fixed multiple there (0.1× on the
+ * per-row as published — the discount is not a fixed multiple there (0.05×–0.1× on the
  * gpt-5.x/6.x rows, 0.25×–0.5× on the older gpt-4.x/o-series ones) — and left unset
  * on the `-pro` models, whose
  * cached rate the page doesn't list; the cost helpers then fall back to the full
@@ -92,7 +92,7 @@ export type CostOptions = {
  * The date the {@link MODELS} prices were last verified, as an ISO `YYYY-MM-DD`
  * string. Exposed so callers can reason about staleness programmatically.
  */
-export const PRICING_VERIFIED_ON = "2026-09-24";
+export const PRICING_VERIFIED_ON = "2026-10-29";
 
 /**
  * The built-in pricing table — the most commonly used models across the three
@@ -102,14 +102,14 @@ export const PRICING_VERIFIED_ON = "2026-09-24";
  * {@link listModels}.
  *
  * Gemini 2.5 Pro is tiered ($1.25/$10.00 ≤200k prompt tokens, $2.50/$15.00 above),
- * and so are the recent OpenAI models (2× input, 1.5× output above 272K prompt
- * tokens) — carried via {@link ModelPricing.highTier} so the cost helpers pick the
+ * Claude Haiku 5.5 is tiered (5× above 100k prompt tokens), and so are the recent
+ * OpenAI models (2× input, 1.5× output above 272K prompt tokens) — carried via {@link ModelPricing.highTier} so the cost helpers pick the
  * right tier from the request's prompt size.
  */
 const MODELS: Record<string, ModelPricing> = {
   // Anthropic. Cache read = 0.1× input, cache write = 1.25× input (5-minute TTL).
-  // Exceptions: cache read is 0.05× input on Opus 5.5 ($0.20) and 0.025× on Fable
-  // 5.1 ($0.25).
+  // Exceptions: cache read is 0.05× input on Opus 5.5 ($0.20) and Sonnet 5.5
+  // ($0.10), and 0.025× on Fable 5.1 ($0.25).
   "claude-fable-5-1": {
     inputPerMTok: 10,
     outputPerMTok: 50,
@@ -155,6 +155,13 @@ const MODELS: Record<string, ModelPricing> = {
     cachedInputPerMTok: 0.5,
     cacheWriteInputPerMTok: 6.25,
   },
+  // Sonnet 5.5 needs its exact key for the same reason as Opus 5.5.
+  "claude-sonnet-5-5": {
+    inputPerMTok: 2,
+    outputPerMTok: 10,
+    cachedInputPerMTok: 0.1,
+    cacheWriteInputPerMTok: 2.5,
+  },
   // Sonnet 5 is the balanced tier of the Claude 5 family. The launch intro price
   // ($2/$10) was made the standard price — the planned 2026-09-01 increase to $3/$15
   // was cancelled.
@@ -170,20 +177,33 @@ const MODELS: Record<string, ModelPricing> = {
     cachedInputPerMTok: 0.3,
     cacheWriteInputPerMTok: 3.75,
   },
+  // Haiku 5.5 bills 5× above 100k prompt tokens (cache reads/writes count toward
+  // the threshold). Its cache-write rate rises too ($0.625), but `highTier` has no
+  // write field, so writes above 100k under-bill at the base $0.125.
+  "claude-haiku-5-5": {
+    inputPerMTok: 0.1,
+    outputPerMTok: 0.5,
+    cachedInputPerMTok: 0.01,
+    cacheWriteInputPerMTok: 0.125,
+    highTier: {
+      aboveInputTokens: 100_000,
+      inputPerMTok: 0.5,
+      outputPerMTok: 2.5,
+      cachedInputPerMTok: 0.05,
+    },
+  },
   "claude-haiku-4-5": {
     inputPerMTok: 1,
     outputPerMTok: 5,
     cachedInputPerMTok: 0.1,
     cacheWriteInputPerMTok: 1.25,
   },
-  // OpenAI. Cache read is published per model (not a fixed multiple — 0.1× on the
-  // 5.x rows, 0.25×–0.5× on the gpt-4.x/o-series ones); no separate cache-write
-  // charge (caching is automatic). The `-pro` rows omit cachedInputPerMTok — the
-  // page lists no cached rate for them (see header note).
+  // OpenAI. Cache read is published per model (not a fixed multiple — 0.05×–0.1× on
+  // the 5.x/6.x rows, 0.25×–0.5× on the gpt-4.x/o-series ones); no separate
+  // cache-write charge (caching is automatic). The `-pro` rows omit
+  // cachedInputPerMTok — the page lists no cached rate for them (see header note).
   // Long context: prompts above 272K input tokens bill 2× input and 1.5× output
-  // (`highTier`). The gpt-6 pages also double the cache rate; the 5.6/5.5/5.4 pages
-  // state only input/output, so their tier omits a cached rate (the base one stays)
-  // — except gpt-5.6-sol, whose long-context row on the pricing page lists $0.80.
+  // (`highTier`), and 2× the cache rate (per the pricing page's long-context columns).
   // gpt-6-astra (2026-09-03) is the flagship above the 5.6 line.
   "gpt-6-astra": {
     inputPerMTok: 10,
@@ -196,8 +216,32 @@ const MODELS: Record<string, ModelPricing> = {
       cachedInputPerMTok: 2,
     },
   },
-  // gpt-6-sol/-luna (GA 2026-09-22). gpt-6-sol is the default (OpenAI's "balance
-  // intelligence and cost" tier). Their pages say Chat Completions "supports
+  // gpt-6.1-sol is the default: same price as gpt-6-sol, half the cache rate. The
+  // 6.1 pages say "Tool calling requires the Responses API" (not Chat Completions).
+  // gpt-6.1-terra (2026-10-26) replaces gpt-5.6-terra as the mid tier.
+  "gpt-6.1-sol": {
+    inputPerMTok: 2,
+    outputPerMTok: 10,
+    cachedInputPerMTok: 0.1,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 4,
+      outputPerMTok: 15,
+      cachedInputPerMTok: 0.2,
+    },
+  },
+  "gpt-6.1-terra": {
+    inputPerMTok: 1,
+    outputPerMTok: 5,
+    cachedInputPerMTok: 0.05,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 2,
+      outputPerMTok: 7.5,
+      cachedInputPerMTok: 0.1,
+    },
+  },
+  // gpt-6-sol/-luna (GA 2026-09-22). Their pages say Chat Completions "supports
   // function calling only with `reasoning_effort` set to `none`".
   "gpt-6-sol": {
     inputPerMTok: 2,
@@ -239,7 +283,12 @@ const MODELS: Record<string, ModelPricing> = {
     inputPerMTok: 2,
     outputPerMTok: 12,
     cachedInputPerMTok: 0.2,
-    highTier: { aboveInputTokens: 272_000, inputPerMTok: 4, outputPerMTok: 18 },
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 4,
+      outputPerMTok: 18,
+      cachedInputPerMTok: 0.4,
+    },
   },
   "gpt-5.6-luna": {
     inputPerMTok: 0.2,
@@ -249,6 +298,7 @@ const MODELS: Record<string, ModelPricing> = {
       aboveInputTokens: 272_000,
       inputPerMTok: 0.4,
       outputPerMTok: 1.8,
+      cachedInputPerMTok: 0.04,
     },
   },
   "gpt-5.5": {
@@ -259,11 +309,19 @@ const MODELS: Record<string, ModelPricing> = {
       aboveInputTokens: 272_000,
       inputPerMTok: 10,
       outputPerMTok: 45,
+      cachedInputPerMTok: 1,
     },
   },
   // gpt-5.5-pro has no published cache-read rate → omit it (falls back to full input).
-  // Its page states no long-context rate either, so no `highTier`.
-  "gpt-5.5-pro": { inputPerMTok: 30, outputPerMTok: 180 },
+  "gpt-5.5-pro": {
+    inputPerMTok: 30,
+    outputPerMTok: 180,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 60,
+      outputPerMTok: 270,
+    },
+  },
   "gpt-5.4": {
     inputPerMTok: 2.5,
     outputPerMTok: 15,
@@ -272,6 +330,7 @@ const MODELS: Record<string, ModelPricing> = {
       aboveInputTokens: 272_000,
       inputPerMTok: 5,
       outputPerMTok: 22.5,
+      cachedInputPerMTok: 0.5,
     },
   },
   "gpt-5.4-mini": {
@@ -279,11 +338,14 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 4.5,
     cachedInputPerMTok: 0.075,
   },
+  // gpt-5.4-nano shuts down 2027-04-01 (→ gpt-6-luna); kept for cost calc.
   "gpt-5.4-nano": {
     inputPerMTok: 0.2,
     outputPerMTok: 1.25,
     cachedInputPerMTok: 0.02,
   },
+  // gpt-4o, gpt-4o-mini, gpt-4.1 and gpt-4.1-mini shut down 2027-01-14 (→
+  // gpt-6-luna); kept for cost calc.
   "gpt-4o": { inputPerMTok: 2.5, outputPerMTok: 10, cachedInputPerMTok: 1.25 },
   "gpt-4o-mini": {
     inputPerMTok: 0.15,
@@ -296,23 +358,19 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 1.6,
     cachedInputPerMTok: 0.1,
   },
-  // gpt-4.1-nano shuts down 2026-10-23 (→ gpt-5.6-luna); kept for cost calc.
-  "gpt-4.1-nano": {
-    inputPerMTok: 0.1,
-    outputPerMTok: 0.4,
-    cachedInputPerMTok: 0.025,
-  },
-  // OpenAI reasoning (o-series). Scheduled shutdowns: o3 2026-12-11, o4-mini
-  // 2026-10-23 — kept for cost calc of historical usage.
+  // o3 shuts down 2026-12-11 (→ gpt-5.6-sol); kept for cost calc.
   o3: { inputPerMTok: 2, outputPerMTok: 8, cachedInputPerMTok: 0.5 },
-  "o4-mini": {
-    inputPerMTok: 1.1,
-    outputPerMTok: 4.4,
-    cachedInputPerMTok: 0.275,
-  },
   // Google (Gemini). Cache read = 0.1× input (tiered for the Pro models). The
   // published rates are the text/image/video ones; audio input bills higher on the
   // flash models and isn't modelled here.
+  // gemini-4-argon (GA 2026-10-13) is the flagship. Google publishes an intro rate
+  // ($2/$10, cache $0.10) through 2026-11-30 and this standard rate from 2026-12-01
+  // — carried for the same reason as the Flash promo below.
+  "gemini-4-argon": {
+    inputPerMTok: 4,
+    outputPerMTok: 20,
+    cachedInputPerMTok: 0.2,
+  },
   // 3.6/3.7/3.8 Flash share one price. Google publishes a promo rate ($0.75/$3.75,
   // cache $0.075) through 2026-12-31 and this standard rate from 2027-01-01. The
   // standard rate is carried (same stance as Sonnet 5 had: over-bill during the promo
@@ -322,6 +380,8 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 7.5,
     cachedInputPerMTok: 0.15,
   },
+  // 3.7 Flash now auto-routes to 3.8, and 3.5 Flash to 3.6 (both gone from the
+  // pricing page); kept for cost calc of older usage.
   "gemini-3.7-flash": {
     inputPerMTok: 1.5,
     outputPerMTok: 7.5,
@@ -349,7 +409,7 @@ const MODELS: Record<string, ModelPricing> = {
     cachedInputPerMTok: 0.025,
   },
   // The 2.5 generation is superseded by 3.x (default is now gemini-3.8-flash). Still
-  // listed as stable with no shutdown date announced (as of 2026-09-24), but since
+  // listed as stable with no shutdown date announced (as of 2026-10-29), but since
   // 2026-09-18 access is limited to users who used them before; kept for cost calc
   // of usage logs.
   "gemini-2.5-pro": {

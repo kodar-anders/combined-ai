@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- Pricing for `claude-sonnet-5-5`, `claude-haiku-5-5` (tiered above 100k prompt tokens),
+  `gpt-6.1-sol`, `gpt-6.1-terra` and `gemini-4-argon`.
+- Long-context cache rates for `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` and `gpt-5.4`, and
+  long-context pricing for `gpt-5.5-pro`.
+
+### Changed
+
+- **OpenAI default model is now `gpt-6.1-sol`** (was `gpt-6-sol`). Same price, cheaper cache
+  reads. It supports tool calling only on the Responses API, which this library doesn't use —
+  pass another `model` for tools.
+
+### Removed
+
+- Pricing for `gpt-4.1-nano` and `o4-mini` (shut down 2026-10-23). `costOf` now returns
+  `undefined` for them; pass `options.models` to price old usage.
+
 ## [2.1.2] - 2026-09-24
 
 ### Added

@@ -87,7 +87,8 @@ export function costOfUsage(
   // Cache reads can be tiered (Gemini 2.5 Pro), so prefer the selected tier's rate,
   // then the base cached rate (per ModelPricing's contract: omit highTier.cachedInputPerMTok
   // to keep the base rate above the threshold), then the plain input rate. Writes
-  // aren't tiered (Anthropic only, no highTier), so read off the base.
+  // have no tiered rate, so read off the base (Haiku 5.5's writes above 100k
+  // under-bill).
   const cachedRate =
     tier.cachedInputPerMTok ?? info.pricing.cachedInputPerMTok ?? inputPerMTok;
   const writeRate = info.pricing.cacheWriteInputPerMTok ?? inputPerMTok;

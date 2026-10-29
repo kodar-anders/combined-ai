@@ -302,7 +302,7 @@ new ProviderRegistry({
   },
   openai: {
     apiKey: "sk-...",
-    model: "gpt-6-sol", // optional; default
+    model: "gpt-6.1-sol", // optional; default
     headers: { "x-trace": "..." }, // optional; merged into every request
   },
   google: {

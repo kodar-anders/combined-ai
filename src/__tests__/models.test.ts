@@ -137,6 +137,23 @@ describe("findModel", () => {
     );
     expect(findModel("claude-fable-5-1")?.id).toBe("claude-fable-5-1");
     expect(findModel("claude-fable-5")?.pricing.cachedInputPerMTok).toBe(1);
+    // Sonnet 5.5 needs its own row (else it resolves to claude-sonnet-5); 0.05× cache.
+    expect(findModel("claude-sonnet-5-5")).toEqual({
+      id: "claude-sonnet-5-5",
+      pricing: {
+        inputPerMTok: 2,
+        outputPerMTok: 10,
+        cachedInputPerMTok: 0.1,
+        cacheWriteInputPerMTok: 2.5,
+      },
+    });
+    // Haiku 5.5 is tiered at 100k prompt tokens.
+    expect(findModel("claude-haiku-5-5")?.pricing.highTier).toEqual({
+      aboveInputTokens: 100_000,
+      inputPerMTok: 0.5,
+      outputPerMTok: 2.5,
+      cachedInputPerMTok: 0.05,
+    });
 
     // gpt-6 (Astra/Sol/Luna); prompts above 272K bill 2× input + cache, 1.5× output.
     expect(findModel("gpt-6-astra")?.pricing).toEqual({
@@ -162,8 +179,20 @@ describe("findModel", () => {
       },
     });
     expect(findModel("gpt-6-luna")?.pricing.inputPerMTok).toBe(0.1);
-    // The 5.6 tiers carry the 2026-08 price cut; their pages state no long-context
-    // cache rate, so the tier omits it.
+    // gpt-6.1 (the default is gpt-6.1-sol) — distinct rows from the gpt-6 line.
+    expect(findModel("gpt-6.1-sol")?.pricing.cachedInputPerMTok).toBe(0.1);
+    expect(findModel("gpt-6.1-terra")?.pricing).toEqual({
+      inputPerMTok: 1,
+      outputPerMTok: 5,
+      cachedInputPerMTok: 0.05,
+      highTier: {
+        aboveInputTokens: 272_000,
+        inputPerMTok: 2,
+        outputPerMTok: 7.5,
+        cachedInputPerMTok: 0.1,
+      },
+    });
+    // The 5.6 tiers carry the 2026-08 price cut.
     expect(findModel("gpt-5.6-terra")?.pricing).toEqual({
       inputPerMTok: 2,
       outputPerMTok: 12,
@@ -172,6 +201,7 @@ describe("findModel", () => {
         aboveInputTokens: 272_000,
         inputPerMTok: 4,
         outputPerMTok: 18,
+        cachedInputPerMTok: 0.4,
       },
     });
     expect(findModel("gpt-5.6-luna")?.pricing.inputPerMTok).toBe(0.2);
@@ -187,26 +217,40 @@ describe("findModel", () => {
         aboveInputTokens: 272_000,
         inputPerMTok: 10,
         outputPerMTok: 45,
+        cachedInputPerMTok: 1,
+      },
+    });
+    // gpt-5.5-pro: long-context tier, but no cache rate at either tier.
+    expect(findModel("gpt-5.5-pro")?.pricing).toEqual({
+      inputPerMTok: 30,
+      outputPerMTok: 180,
+      highTier: {
+        aboveInputTokens: 272_000,
+        inputPerMTok: 60,
+        outputPerMTok: 270,
       },
     });
     expect(findModel("gpt-5.4-mini")?.id).toBe("gpt-5.4-mini");
     expect(findModel("gpt-5.4-nano")?.id).toBe("gpt-5.4-nano");
     expect(findModel("gpt-5.4-2026-01-01")?.id).toBe("gpt-5.4");
 
-    // OpenAI reasoning models — a dated snapshot still resolves to the base id, and
-    // o4-mini stays distinct from a bare `o4` prefix.
+    // OpenAI reasoning models — a dated snapshot still resolves to the base id.
     expect(findModel("o3")?.pricing).toEqual({
       inputPerMTok: 2,
       outputPerMTok: 8,
       cachedInputPerMTok: 0.5,
     });
-    expect(findModel("o4-mini")?.pricing).toEqual({
-      inputPerMTok: 1.1,
-      outputPerMTok: 4.4,
-      cachedInputPerMTok: 0.275,
-    });
     expect(findModel("o3-2025-04-16")?.id).toBe("o3");
+    // Retired 2026-10-23 and removed from the table.
+    expect(findModel("o4-mini")).toBeUndefined();
+    expect(findModel("gpt-4.1-nano")).toBeUndefined();
 
+    // Gemini 4 Argon carries its post-promo (2026-12-01) standard rate.
+    expect(findModel("gemini-4-argon")?.pricing).toEqual({
+      inputPerMTok: 4,
+      outputPerMTok: 20,
+      cachedInputPerMTok: 0.2,
+    });
     // Gemini 3.x GA flash tiers (3.8 is the default; 3.6/3.7/3.8 share a price).
     expect(findModel("gemini-3.8-flash")?.pricing.outputPerMTok).toBe(7.5);
     expect(findModel("gemini-3.7-flash")?.pricing.outputPerMTok).toBe(7.5);

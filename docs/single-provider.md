@@ -163,9 +163,11 @@ if (first.toolCalls) {
 - **`complete()`-only**, and **not** part of `combine()` (a multi-model tool loop
   has no coherent shared state). Use `select()` for it.
 - **Check the model first.** Anthropic's default `claude-opus-5-5` (and
-  `claude-fable-5-1`) reject a forced `toolChoice` (`"any"` or `{ name }`) with a 400. OpenAI's default `gpt-6-sol` (and `gpt-6-luna`) support function calling
-  on Chat Completions "only with `reasoning_effort` set to `none`", which this
-  library doesn't send — pass another `model` (e.g. `gpt-5.6-terra`) for tools.
+  `claude-fable-5-1`) reject a forced `toolChoice` (`"any"` or `{ name }`) with a 400. OpenAI's default `gpt-6.1-sol` (and `gpt-6.1-terra`) need the Responses API
+  for tool calling, which this library doesn't use; `gpt-6-sol`/`gpt-6-luna`
+  support it on Chat Completions "only with `reasoning_effort` set to `none`",
+  which this library doesn't send — pass another `model` (e.g. `gpt-5.6-terra`)
+  for tools.
 
 ## Multimodal input
 
