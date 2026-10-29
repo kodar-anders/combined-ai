@@ -7,6 +7,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Changed
+
+- **Dev tooling (no runtime/API impact)**: bumped dev dependencies within range (`jest`,
+  `@swc/core`, `@types/node` (still 24.x), `eslint`, `eslint-plugin-jest`, `globals`,
+  `prettier`, `typescript-eslint`), the `esbuild`/`undici` resolutions, and Yarn 4.17.1 → 4.18.1.
+
 ## [2.1.3] - 2026-10-29
 
 ### Added
