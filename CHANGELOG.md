@@ -12,6 +12,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - **Dev tooling (no runtime/API impact)**: bumped dev dependencies within range (`jest`,
   `@swc/core`, `@types/node` (still 24.x), `eslint`, `eslint-plugin-jest`, `globals`,
   `prettier`, `typescript-eslint`), the `esbuild`/`undici` resolutions, and Yarn 4.17.1 → 4.18.1.
+- **Dev tooling**: `dotenv` 17 → 18 (test-only; the `config({ quiet: true })` call is unchanged).
 
 ## [2.1.3] - 2026-10-29
 
