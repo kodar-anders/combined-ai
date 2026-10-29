@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-10-29
+
 ### Added
 
 - Pricing for `claude-sonnet-5-5`, `claude-haiku-5-5` (tiered above 100k prompt tokens),
