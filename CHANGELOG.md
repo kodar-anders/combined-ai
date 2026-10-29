@@ -13,6 +13,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   `@swc/core`, `@types/node` (still 24.x), `eslint`, `eslint-plugin-jest`, `globals`,
   `prettier`, `typescript-eslint`), the `esbuild`/`undici` resolutions, and Yarn 4.17.1 → 4.18.1.
 - **Dev tooling**: `dotenv` 17 → 18 (test-only; the `config({ quiet: true })` call is unchanged).
+- **Build**: `tsup` 8 → 9 (building now needs Node ≥ 22.18). JS output is unchanged; the
+  `.d.ts` files now use `export type { … }` and `combined-ai/test` types import from the main
+  entry. Dropped the `ignoreDeprecations` tsconfig workaround, since tsup no longer injects `baseUrl`.
 
 ## [2.1.3] - 2026-10-29
 

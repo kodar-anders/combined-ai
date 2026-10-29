@@ -24,9 +24,6 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
-    // tsup's .d.ts bundler injects a deprecated `baseUrl`; silence the TS6→7 deprecation error.
-    "ignoreDeprecations": "6.0",
-
     // tsc is only used for type-checking (`tsc --noEmit`); tsup produces the build.
     "noEmit": true
   },
