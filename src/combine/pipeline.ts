@@ -67,6 +67,7 @@ const PIPELINE_REFINE_FRAMING =
   "revision, or that multiple assistants were involved.";
 
 /** The running answer carried from one stage to the next (its producing stage + its output). */
+// eslint-disable-next-line unicorn/prefer-smaller-scope -- a documented module-level type reads better than one nested in the orchestrator.
 type Running = {
   /** The roster entry (id/provider/overrides) of the stage that produced this answer. */
   entry: RosterEntry;

@@ -106,6 +106,12 @@ export default tseslint.config(
       "unicorn/max-nested-calls": "off", // call-nesting depth isn't worth policing
       "unicorn/no-unreadable-for-of-expression": "off", // inline `.slice()`/`.stream()` in a for-of header reads fine
       "unicorn/prefer-global-number-constants": "off", // keep explicit `Number.POSITIVE_INFINITY`
+      "unicorn/no-asterisk-prefix-in-documentation-comments": "off", // keep standard ` * `-prefixed JSDoc/TSDoc
+      "unicorn/single-line-block-comment-style": "off", // one-line `/** … */` doc comments are fine
+      "unicorn/no-unnecessary-array-flat-map": "off", // keep the explicit `cond ? [x] : []` filter-map idiom
+      "unicorn/prefer-ternary": "off", // guard-clause early returns read better than ternaries
+      "unicorn/prefer-early-return": "off", // would break symmetry with sibling `if (config.x)` blocks
+      "unicorn/prefer-combined-guards": "off", // separate guards each carry their own rationale comment
       // ES2022 lib target — these prefer methods that aren't available yet:
       "unicorn/prefer-array-from-async": "off", // `Array.fromAsync` is ES2024
       "unicorn/prefer-iterator-to-array": "off", // `Iterator#toArray` is ES2025
@@ -134,6 +140,8 @@ export default tseslint.config(
       "unicorn/prefer-await": "off", // `.catch((e) => e)` to capture a rejection for assertions
       "unicorn/no-return-array-push": "off", // `(e) => arr.push(e)` collectors whose return is ignored
       "unicorn/no-duplicate-loops": "off", // `for (const x of arr.filter(...))` in assertions
+      "unicorn/prefer-then-catch": "off", // two-arg `.then(ok, err)` so an "expected to throw" isn't swallowed
+      "unicorn/no-unnecessary-parameters": "off", // helpers like `tok(1_000_000)` read clearer at the call site
       "jest/consistent-test-it": ["warn", { fn: "it", withinDescribe: "it" }],
     },
   },

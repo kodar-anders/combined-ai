@@ -348,9 +348,9 @@ export function outcomeUsage(outcomes: ParticipantOutcome[]): UsageEntry[] {
  */
 export function callUsages(entries: UsageEntry[]): CallUsage[] {
   return entries.flatMap((e) =>
-    e.model !== undefined && e.usage !== undefined
-      ? [{ id: e.id, model: e.model, usage: e.usage }]
-      : [],
+    e.model === undefined || e.usage === undefined
+      ? []
+      : [{ id: e.id, model: e.model, usage: e.usage }],
   );
 }
 

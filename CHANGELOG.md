@@ -16,6 +16,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - **Build**: `tsup` 8 → 9 (building now needs Node ≥ 22.18). JS output is unchanged; the
   `.d.ts` files now use `export type { … }` and `combined-ai/test` types import from the main
   entry. Dropped the `ignoreDeprecations` tsconfig workaround, since tsup no longer injects `baseUrl`.
+- **Lint**: `eslint-plugin-unicorn` 71 → 79. Purely stylistic new rules (JSDoc asterisk/one-line
+  comment style, `prefer-ternary`, `prefer-early-return`, `prefer-combined-guards`,
+  `no-unnecessary-array-flat-map`; `prefer-then-catch`/`no-unnecessary-parameters` in tests) are
+  disabled in `eslint.config.mjs` with rationale; one negated condition was flipped.
 
 ## [2.1.3] - 2026-10-29
 
