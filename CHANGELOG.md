@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-11-18
+
 ### Added
 
 - Pricing for `claude-fable-5-2`, `gpt-6.2-astra`, `gpt-6.2-sol`, `gemini-4-carbon` and
