@@ -302,12 +302,12 @@ new ProviderRegistry({
   },
   openai: {
     apiKey: "sk-...",
-    model: "gpt-6.1-sol", // optional; default
+    model: "gpt-6.2-sol", // optional; default
     headers: { "x-trace": "..." }, // optional; merged into every request
   },
   google: {
     apiKey: "...",
-    model: "gemini-3.8-flash", // optional; default
+    model: "gemini-4-hydrogen", // optional; default
   },
 });
 ```

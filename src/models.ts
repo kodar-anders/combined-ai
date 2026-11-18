@@ -14,13 +14,13 @@
  * without waiting for a release. See {@link PRICING_VERIFIED_ON} for when these
  * numbers were last checked.
  *
- * Prices verified 2026-10-29 against:
+ * Prices verified 2026-11-18 against:
  * - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
  * - OpenAI:    https://developers.openai.com/api/docs/pricing
- * - Google:    https://ai.google.dev/gemini-api/docs/pricing
+ * - Google:    https://aistudio.google.com/docs/pricing (ai.google.dev redirects here)
  *
  * Prompt-cache rates: Anthropic's (read 0.1× input — 0.05× on Opus 5.5/Sonnet 5.5,
- * 0.025× on Fable 5.1; write 1.25× input = the 5-minute TTL rate, so 1-hour writes under-bill) and Gemini's
+ * 0.025× on Fable 5.1/5.2; write 1.25× input = the 5-minute TTL rate, so 1-hour writes under-bill) and Gemini's
  * (read 0.1× input, tiered for the Pro models) are carried. OpenAI's are carried
  * per-row as published — the discount is not a fixed multiple there (0.05×–0.1× on the
  * gpt-5.x/6.x rows, 0.25×–0.5× on the older gpt-4.x/o-series ones) — and left unset
@@ -92,7 +92,7 @@ export type CostOptions = {
  * The date the {@link MODELS} prices were last verified, as an ISO `YYYY-MM-DD`
  * string. Exposed so callers can reason about staleness programmatically.
  */
-export const PRICING_VERIFIED_ON = "2026-10-29";
+export const PRICING_VERIFIED_ON = "2026-11-18";
 
 /**
  * The built-in pricing table — the most commonly used models across the three
@@ -109,7 +109,15 @@ export const PRICING_VERIFIED_ON = "2026-10-29";
 const MODELS: Record<string, ModelPricing> = {
   // Anthropic. Cache read = 0.1× input, cache write = 1.25× input (5-minute TTL).
   // Exceptions: cache read is 0.05× input on Opus 5.5 ($0.20) and Sonnet 5.5
-  // ($0.10), and 0.025× on Fable 5.1 ($0.25).
+  // ($0.10), and 0.025× on Fable 5.1 ($0.25) and Fable 5.2 ($0.20).
+  // Fable 5.2 needs its exact key: without it, `claude-fable-5-2` resolves to
+  // `claude-fable-5` via the digit-snapshot rule and bills the old $10/$1 rates.
+  "claude-fable-5-2": {
+    inputPerMTok: 8,
+    outputPerMTok: 40,
+    cachedInputPerMTok: 0.2,
+    cacheWriteInputPerMTok: 10,
+  },
   "claude-fable-5-1": {
     inputPerMTok: 10,
     outputPerMTok: 50,
@@ -216,8 +224,33 @@ const MODELS: Record<string, ModelPricing> = {
       cachedInputPerMTok: 2,
     },
   },
-  // gpt-6.1-sol is the default: same price as gpt-6-sol, half the cache rate. The
-  // 6.1 pages say "Tool calling requires the Responses API" (not Chat Completions).
+  // gpt-6.2-astra/-sol are the newest. gpt-6.2-sol is the default: same price as
+  // gpt-6.1-sol. Its page rejects `reasoning_effort: "none"` and states no
+  // Chat Completions tool-calling rule (unverified).
+  "gpt-6.2-astra": {
+    inputPerMTok: 8,
+    outputPerMTok: 40,
+    cachedInputPerMTok: 0.4,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 16,
+      outputPerMTok: 60,
+      cachedInputPerMTok: 0.8,
+    },
+  },
+  "gpt-6.2-sol": {
+    inputPerMTok: 2,
+    outputPerMTok: 10,
+    cachedInputPerMTok: 0.1,
+    highTier: {
+      aboveInputTokens: 272_000,
+      inputPerMTok: 4,
+      outputPerMTok: 15,
+      cachedInputPerMTok: 0.2,
+    },
+  },
+  // gpt-6.1-sol: same price as gpt-6-sol, half the cache rate. The 6.1 pages say
+  // "Tool calling requires the Responses API" (not Chat Completions).
   // gpt-6.1-terra (2026-10-26) replaces gpt-5.6-terra as the mid tier.
   "gpt-6.1-sol": {
     inputPerMTok: 2,
@@ -266,8 +299,8 @@ const MODELS: Record<string, ModelPricing> = {
     },
   },
   // The 5.6 family (GA 2026-07-09) is tiered Sol/Terra/Luna — no mini/nano this
-  // generation. Prices are the post-2026-08-22 cut. Sol's is promotional ("at least
-  // through 2026-11-21") with no post-promo rate published — carried as published.
+  // generation. Prices are the post-2026-08-22 cut. Sol's is promotional ("until
+  // November 30, 2026") with no post-promo rate published — carried as published.
   "gpt-5.6-sol": {
     inputPerMTok: 4,
     outputPerMTok: 20,
@@ -358,18 +391,31 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 1.6,
     cachedInputPerMTok: 0.1,
   },
-  // o3 shuts down 2026-12-11 (→ gpt-5.6-sol); kept for cost calc.
+  // o3 shuts down 2026-12-11 (→ gpt-6.1-sol); kept for cost calc.
   o3: { inputPerMTok: 2, outputPerMTok: 8, cachedInputPerMTok: 0.5 },
   // Google (Gemini). Cache read = 0.1× input (tiered for the Pro models). The
   // published rates are the text/image/video ones; audio input bills higher on the
   // flash models and isn't modelled here.
   // gemini-4-argon (GA 2026-10-13) is the flagship. Google publishes an intro rate
   // ($2/$10, cache $0.10) through 2026-11-30 and this standard rate from 2026-12-01
-  // — carried for the same reason as the Flash promo below.
+  // — carried for the same reason as the Flash promo below. gemini-4-carbon
+  // (2026-11-10) has the identical intro/standard schedule.
+  "gemini-4-carbon": {
+    inputPerMTok: 4,
+    outputPerMTok: 20,
+    cachedInputPerMTok: 0.2,
+  },
   "gemini-4-argon": {
     inputPerMTok: 4,
     outputPerMTok: 20,
     cachedInputPerMTok: 0.2,
+  },
+  // gemini-4-hydrogen (Stable, 2026-11) is the default: flat $1.50/$7.50, no promo,
+  // implicit caching only.
+  "gemini-4-hydrogen": {
+    inputPerMTok: 1.5,
+    outputPerMTok: 7.5,
+    cachedInputPerMTok: 0.075,
   },
   // 3.6/3.7/3.8 Flash share one price. Google publishes a promo rate ($0.75/$3.75,
   // cache $0.075) through 2026-12-31 and this standard rate from 2027-01-01. The
@@ -408,10 +454,10 @@ const MODELS: Record<string, ModelPricing> = {
     outputPerMTok: 1.5,
     cachedInputPerMTok: 0.025,
   },
-  // The 2.5 generation is superseded by 3.x (default is now gemini-3.8-flash). Still
-  // listed as stable with no shutdown date announced (as of 2026-10-29), but since
-  // 2026-09-18 access is limited to users who used them before; kept for cost calc
-  // of usage logs.
+  // The 2.5 generation is superseded by 3.x/4.x. gemini-2.5-pro and -flash shut
+  // down 2026-12-01 (requests then auto-route to gemini-3.8-flash and
+  // gemini-3.5-flash-lite, billed at their rates); gemini-2.5-flash-lite is "not
+  // deprecated". Kept for cost calc of usage logs.
   "gemini-2.5-pro": {
     inputPerMTok: 1.25,
     outputPerMTok: 10,

@@ -7,8 +7,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- Pricing for `claude-fable-5-2`, `gpt-6.2-astra`, `gpt-6.2-sol`, `gemini-4-carbon` and
+  `gemini-4-hydrogen`. `claude-fable-5-2` needed its own row: it previously resolved to
+  `claude-fable-5` and priced at the old $10/$1 rates.
+
 ### Changed
 
+- **OpenAI default model is now `gpt-6.2-sol`** (was `gpt-6.1-sol`). Same price. It rejects
+  `reasoning_effort: "none"` and documents tool calling for the Responses API only, so tool
+  calling via Chat Completions on the default is unverified.
+- **Google default model is now `gemini-4-hydrogen`** (was `gemini-3.8-flash`). Flat $1.50/$7.50,
+  no promo, implicit caching only.
+- Pricing comments refreshed: `gemini-2.5-pro`/`-flash` shut down 2026-12-01 (rows kept for cost
+  calc), `gpt-5.6-sol` promo runs through 2026-11-30 (no post-promo rate published), `o3`
+  replacement is `gpt-6.1-sol`. `PRICING_VERIFIED_ON` is now 2026-11-18.
 - **Dev tooling (no runtime/API impact)**: bumped dev dependencies within range (`jest`,
   `@swc/core`, `@types/node` (still 24.x), `eslint`, `eslint-plugin-jest`, `globals`,
   `prettier`, `typescript-eslint`), the `esbuild`/`undici` resolutions, and Yarn 4.17.1 → 4.18.1.

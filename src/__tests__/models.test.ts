@@ -130,12 +130,21 @@ describe("findModel", () => {
       cacheWriteInputPerMTok: 2.5,
     });
     expect(findModel("claude-opus-4-6")?.pricing.inputPerMTok).toBe(5);
-    // Fable 5.1 is the one Anthropic row with a 0.025× cache-read rate; its id is a
-    // sibling of claude-fable-5 (digit suffix), so both must resolve to themselves.
+    // Fable 5.1/5.2 carry a 0.025× cache-read rate; their ids are siblings of
+    // claude-fable-5 (digit suffix), so all three must resolve to themselves.
     expect(findModel("claude-fable-5-1")?.pricing.cachedInputPerMTok).toBe(
       0.25,
     );
     expect(findModel("claude-fable-5-1")?.id).toBe("claude-fable-5-1");
+    expect(findModel("claude-fable-5-2")).toEqual({
+      id: "claude-fable-5-2",
+      pricing: {
+        inputPerMTok: 8,
+        outputPerMTok: 40,
+        cachedInputPerMTok: 0.2,
+        cacheWriteInputPerMTok: 10,
+      },
+    });
     expect(findModel("claude-fable-5")?.pricing.cachedInputPerMTok).toBe(1);
     // Sonnet 5.5 needs its own row (else it resolves to claude-sonnet-5); 0.05× cache.
     expect(findModel("claude-sonnet-5-5")).toEqual({
@@ -179,7 +188,10 @@ describe("findModel", () => {
       },
     });
     expect(findModel("gpt-6-luna")?.pricing.inputPerMTok).toBe(0.1);
-    // gpt-6.1 (the default is gpt-6.1-sol) — distinct rows from the gpt-6 line.
+    // gpt-6.1/6.2 (the default is gpt-6.2-sol) — distinct rows from the gpt-6 line.
+    expect(findModel("gpt-6.2-sol")?.id).toBe("gpt-6.2-sol");
+    expect(findModel("gpt-6.2-sol")?.pricing.highTier?.outputPerMTok).toBe(15);
+    expect(findModel("gpt-6.2-astra")?.pricing.inputPerMTok).toBe(8);
     expect(findModel("gpt-6.1-sol")?.pricing.cachedInputPerMTok).toBe(0.1);
     expect(findModel("gpt-6.1-terra")?.pricing).toEqual({
       inputPerMTok: 1,
@@ -251,7 +263,14 @@ describe("findModel", () => {
       outputPerMTok: 20,
       cachedInputPerMTok: 0.2,
     });
-    // Gemini 3.x GA flash tiers (3.8 is the default; 3.6/3.7/3.8 share a price).
+    expect(findModel("gemini-4-carbon")?.pricing.outputPerMTok).toBe(20);
+    // Gemini 4 Hydrogen is the default: flat rate, no promo.
+    expect(findModel("gemini-4-hydrogen")?.pricing).toEqual({
+      inputPerMTok: 1.5,
+      outputPerMTok: 7.5,
+      cachedInputPerMTok: 0.075,
+    });
+    // Gemini 3.x GA flash tiers (3.6/3.7/3.8 share a price).
     expect(findModel("gemini-3.8-flash")?.pricing.outputPerMTok).toBe(7.5);
     expect(findModel("gemini-3.7-flash")?.pricing.outputPerMTok).toBe(7.5);
     expect(findModel("gemini-3.6-flash")?.pricing.outputPerMTok).toBe(7.5);

@@ -40,11 +40,10 @@ Both `complete()` and `stream()` (and `combine()`) take a `CompletionRequest`:
 > reduces run-to-run variation but is not a seed — these APIs aren't reproducible even
 > at 0. A `NaN`/`Infinity` throws rather than reaching the wire as `null`.
 
-> **Gemini note:** Gemini 2.5 and 3.x models are _thinking_ models, and their
+> **Gemini note:** Gemini 2.5, 3.x and 4.x models are _thinking_ models, and their
 > internal thinking tokens count against `maxTokens`. A very small cap can be
 > spent on thinking alone, leaving the visible answer empty or truncated, so give
-> Gemini ample headroom (the default `gemini-3.8-flash` can't switch thinking
-> off).
+> Gemini ample headroom.
 
 ## Result fields
 
@@ -163,8 +162,10 @@ if (first.toolCalls) {
 - **`complete()`-only**, and **not** part of `combine()` (a multi-model tool loop
   has no coherent shared state). Use `select()` for it.
 - **Check the model first.** Anthropic's default `claude-opus-5-5` (and
-  `claude-fable-5-1`) reject a forced `toolChoice` (`"any"` or `{ name }`) with a 400. OpenAI's default `gpt-6.1-sol` (and `gpt-6.1-terra`) need the Responses API
-  for tool calling, which this library doesn't use; `gpt-6-sol`/`gpt-6-luna`
+  `claude-fable-5-1`) reject a forced `toolChoice` (`"any"` or `{ name }`) with a 400. OpenAI's `gpt-6.1-sol` (and `gpt-6.1-terra`) need the Responses API
+  for tool calling, which this library doesn't use; the default `gpt-6.2-sol`
+  documents tools only for the Responses API and rejects `reasoning_effort: "none"`,
+  so Chat Completions tool calling there is unverified; `gpt-6-sol`/`gpt-6-luna`
   support it on Chat Completions "only with `reasoning_effort` set to `none`",
   which this library doesn't send — pass another `model` (e.g. `gpt-5.6-terra`)
   for tools.
